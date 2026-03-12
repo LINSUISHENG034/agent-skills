@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deployment Host Diagnostics"
+  short_description: "Diagnose the OpenClaw deployment host"
+  default_prompt: "Use $deployment-host-diagnostics to inspect this OpenClaw host and answer with verified runtime evidence."

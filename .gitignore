@@ -1,0 +1,34 @@
+# OS and editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# Python caches and local runtimes
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/.pytest_cache/
+
+# Local environment and secrets
+**/.env
+**/.env.*
+**/.asr_env
+**/keys/adbkey
+**/keys/adbkey.pub
+
+# Local output and logs
+*.log
+**/*.log
+tmp/
+dist/
+
+# Unfinished skills kept locally in the repository workspace
+/drafts/*
+!/drafts/.gitkeep
+
+# Local reference copies of external authoring guides
+/docs/references/skill-authoring/The-Complete-Guide-to-Building-Skill-for-Claude.md
+/docs/references/skill-authoring/assets/The-Complete-Guide-to-Building-Skill-for-Claude.pdf
+
+# Working plans used during skill development
+/docs/plans/

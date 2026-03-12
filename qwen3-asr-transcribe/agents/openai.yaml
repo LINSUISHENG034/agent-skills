@@ -1,0 +1,4 @@
+interface:
+  display_name: "Qwen3 ASR Transcribe"
+  short_description: "Transcribe local audio or video with Qwen3 ASR"
+  default_prompt: "Use $qwen3-asr-transcribe to turn an audio or video file into text."
