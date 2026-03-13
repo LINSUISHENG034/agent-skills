@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Browser Ubuntu Server"
+  short_description: "Protected-site browser workflow for Ubuntu Server"
+  default_prompt: "Use $agent-browser-ubuntu-server for protected-site browser tasks, session reuse, or recovery on Ubuntu Server."
