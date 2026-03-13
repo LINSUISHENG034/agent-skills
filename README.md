@@ -20,8 +20,6 @@ Maintainer-facing reference material lives under `docs/`.
   - Standalone Ubuntu Server browser workflow for protected sites, live session reuse, challenge recovery, and noVNC-assisted session capture.
 - `deployment-host-diagnostics`
   - Host-side diagnostics for OpenClaw deployments using live command-backed evidence and layered troubleshooting.
-- `host-assisted-browser-login`
-  - Headless Linux login bootstrap with user-assisted noVNC access for cookies, OAuth, CAPTCHA, and 2FA.
 - `qwen3-asr-transcribe`
   - Local transcription workflow using a bundled Qwen3 ASR runtime.
 
@@ -69,21 +67,18 @@ npx clawhub@latest install agent-browser
 
 ## Skill Handoff
 
-`host-assisted-browser-login` is designed to work with an external browser-interaction skill such as `agent-browser`.
+`ubuntu-browser-session` is the canonical public name for the former `agent-browser-ubuntu-server` skill. It owns host-side browser session discovery, reuse, assisted login, and page verification inside one workflow.
 
-`ubuntu-browser-session` is the canonical public name for the former `agent-browser-ubuntu-server` skill. It covers a different boundary: it is a standalone Ubuntu Server browser skill that owns protected-site session discovery, reuse, recovery, and assisted capture inside one workflow.
+Use an external browser-interaction companion such as `agent-browser` only when:
 
-Companion-skill handoff remains useful for `host-assisted-browser-login`:
-
-1. If a usable interactive browser session already exists, use your installed browser-interaction skill.
-2. If the host is headless and the task is blocked on login, cookies, CAPTCHA, or 2FA, use `host-assisted-browser-login` first.
-3. After the host-side authenticated session is established, switch back to the external browser-interaction skill for normal page interaction and verification.
-4. When the saved profile is sufficient, stop the host-assisted stack to save resources.
+1. A usable authenticated browser session already exists.
+2. The remaining work is ordinary page interaction, screenshots, or DOM inspection.
+3. You do not need session recovery, assisted login, or host-side browser stack repair.
 
 Quick rule:
 
 - "I need to interact with a web page" -> use an installed browser-interaction skill such as `agent-browser`
-- "I need to establish a host-side logged-in browser first" -> `host-assisted-browser-login`
+- "I need to establish or recover a host-side logged-in browser first" -> `ubuntu-browser-session`
 
 ## Local-Only Files
 

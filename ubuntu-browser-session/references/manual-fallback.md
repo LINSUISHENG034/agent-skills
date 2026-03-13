@@ -1,6 +1,6 @@
 # Manual Fallback
 
-Use this only when `scripts/browser-login-stack.sh` is insufficient or when debugging the stack itself.
+Use this only when `scripts/open-protected-page.sh` and `scripts/assisted-session.sh` are insufficient or when debugging the browser stack itself.
 
 ## Manual Start Sequence
 

@@ -161,6 +161,18 @@ After the user finishes the blocked step and the host-side verification is clean
 {baseDir}/scripts/assisted-session.sh capture --origin 'https://target.example' --session-key default
 ```
 
+If direct noVNC access is blocked or the user is on Windows, prefer SSH port forwarding before assuming the stack is unhealthy:
+
+```powershell
+ssh -L 6080:127.0.0.1:6080 -L 9222:127.0.0.1:9222 USER@HOST_IP
+```
+
+Then the user opens:
+
+```text
+http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=remote
+```
+
 ## Failure And Recovery Rules
 
 - If multiple same-origin sessions exist, require `--account-hint` or `--task-scope`
@@ -183,3 +195,4 @@ See also:
 - `references/session-manifest.md`
 - `references/assisted-session-flow.md`
 - `references/testing-matrix.md`
+- `references/manual-fallback.md`
