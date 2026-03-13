@@ -32,3 +32,6 @@ dist/
 
 # Working plans used during skill development
 /docs/plans/
+
+# Local issue notes used during skill development
+/docs/issues/
