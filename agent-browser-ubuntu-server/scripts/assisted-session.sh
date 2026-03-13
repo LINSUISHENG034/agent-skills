@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/runtime-common.sh"
+
 usage() {
   cat <<'EOF'
 Usage:
   assisted-session.sh start --url URL [options]
-  assisted-session.sh status [--run-dir DIR]
+  assisted-session.sh status [options]
   assisted-session.sh capture --origin URL [options]
-  assisted-session.sh stop [--run-dir DIR]
+  assisted-session.sh stop [options]
 
 Options:
   --block-reason REASON
@@ -45,6 +49,10 @@ runtime_helper() {
   "${AGENT_BROWSER_RUNTIME_HELPER:-$SCRIPT_DIR/browser-runtime.sh}" "$@"
 }
 
+select_target_helper() {
+  "${AGENT_BROWSER_SELECT_TARGET_HELPER:-$SCRIPT_DIR/browser-runtime.sh}" "$@"
+}
+
 manifest_helper() {
   "${AGENT_BROWSER_MANIFEST_HELPER:-$SCRIPT_DIR/session-manifest.sh}" "$@"
 }
@@ -70,11 +78,15 @@ write_state() {
   mkdir -p "$RUN_DIR"
   cat >"$STATE_FILE" <<EOF
 URL=$(printf '%q' "$INITIAL_URL")
+ORIGIN=$(printf '%q' "$ORIGIN")
+SESSION_KEY=$(printf '%q' "$SESSION_KEY")
 RUN_DIR=$(printf '%q' "$RUN_DIR")
+RUNTIME_RUN_DIR=$(printf '%q' "$RUNTIME_RUN_DIR")
 MANIFEST_ROOT=$(printf '%q' "$MANIFEST_ROOT")
 NOVNC_PORT=$(printf '%q' "$NOVNC_PORT")
 VNC_PORT=$(printf '%q' "$VNC_PORT")
 PROFILE_DIR=$(printf '%q' "$PROFILE_DIR")
+LOG_DIR=$(printf '%q' "$LOG_DIR")
 EOF
 }
 
@@ -121,7 +133,11 @@ stop_process() {
 }
 
 runtime_status() {
-  runtime_helper status --run-dir "$RUNTIME_RUN_DIR"
+  runtime_helper status \
+    --run-dir "$RUNTIME_RUN_DIR" \
+    --origin "$ORIGIN" \
+    --session-key "$SESSION_KEY" \
+    ${INITIAL_URL:+--url "$INITIAL_URL"}
 }
 
 runtime_value() {
@@ -141,24 +157,59 @@ for raw in sys.argv[2].splitlines():
 PY
 }
 
-first_page_target_id() {
-  local payload="$1"
-  python3 - "$payload" <<'PY'
-import json
-import sys
+resolve_context() {
+  BASE_ROOT="${HOME}/.agent-browser"
+  MANIFEST_ROOT="${MANIFEST_ROOT:-$BASE_ROOT}"
+  SESSION_KEY="${SESSION_KEY:-default}"
+  if [ -z "$ORIGIN" ] && [ -n "$INITIAL_URL" ]; then
+    ORIGIN="$(derive_origin "$INITIAL_URL")"
+  fi
+  if [ -z "$ORIGIN" ]; then
+    ORIGIN="https://example.com"
+  fi
+  if [ -z "$INITIAL_URL" ]; then
+    INITIAL_URL="$ORIGIN"
+  fi
 
-targets = json.loads(sys.argv[1])
-for target in targets:
-    if target.get("type") == "page":
-        print(target.get("id", ""))
-        break
-PY
+  if [ -z "$RUN_DIR" ]; then
+    RUN_DIR="$(runtime_scoped_path "$BASE_ROOT" assist "$ORIGIN" "$SESSION_KEY")"
+  fi
+  STATE_FILE="$RUN_DIR/assist.env"
+  load_state
+
+  RUN_DIR="${CLI_RUN_DIR:-${RUN_DIR:-}}"
+  MANIFEST_ROOT="${CLI_MANIFEST_ROOT:-${MANIFEST_ROOT:-$BASE_ROOT}}"
+  INITIAL_URL="${CLI_INITIAL_URL:-${INITIAL_URL:-$ORIGIN}}"
+  ORIGIN="${CLI_ORIGIN:-${ORIGIN:-$(derive_origin "$INITIAL_URL")}}"
+  PROFILE_DIR="${CLI_PROFILE_DIR:-${PROFILE_DIR:-}}"
+  NOVNC_PORT="${CLI_NOVNC_PORT:-${NOVNC_PORT:-6080}}"
+  VNC_PORT="${CLI_VNC_PORT:-${VNC_PORT:-5900}}"
+  SESSION_KEY="${CLI_SESSION_KEY:-${SESSION_KEY:-default}}"
+  LOG_DIR="${LOG_DIR:-}"
+  RUNTIME_RUN_DIR="${RUNTIME_RUN_DIR:-}"
+
+  if [ -z "$RUN_DIR" ]; then
+    RUN_DIR="$(runtime_scoped_path "$BASE_ROOT" assist "$ORIGIN" "$SESSION_KEY")"
+  fi
+  if [ -z "$RUNTIME_RUN_DIR" ]; then
+    RUNTIME_RUN_DIR="$(runtime_scoped_path "$BASE_ROOT" run "$ORIGIN" "$SESSION_KEY")"
+  fi
+  if [ -z "$PROFILE_DIR" ]; then
+    PROFILE_DIR="$(runtime_scoped_path "$BASE_ROOT" profiles "$ORIGIN" "$SESSION_KEY")"
+  fi
+  if [ -z "$LOG_DIR" ]; then
+    LOG_DIR="$(runtime_scoped_path "$BASE_ROOT" logs "$ORIGIN" "$SESSION_KEY")"
+  fi
+
+  STATE_FILE="$RUN_DIR/assist.env"
 }
 
 status_assisted() {
   local runtime
   runtime="$(runtime_status)"
   printf 'assisted_session: %s\n' "$(pid_running "$(read_pid x11vnc)" && printf 'running' || printf 'stopped')"
+  printf 'run_dir: %s\n' "$RUN_DIR"
+  printf 'runtime_run_dir: %s\n' "$RUNTIME_RUN_DIR"
   printf 'novnc_url: http://127.0.0.1:%s/vnc.html?autoconnect=1&resize=remote\n' "$NOVNC_PORT"
   printf '%s\n' "$runtime"
 }
@@ -167,7 +218,13 @@ ensure_runtime_for_assist() {
   local runtime
   runtime="$(runtime_status)"
   if ! printf '%s\n' "$runtime" | grep -q '^runtime: running$'; then
-    runtime_helper start --run-dir "$RUNTIME_RUN_DIR" --url "$INITIAL_URL" --mode gui ${PROFILE_DIR:+--profile-dir "$PROFILE_DIR"} >/dev/null
+    runtime_helper start \
+      --run-dir "$RUNTIME_RUN_DIR" \
+      --url "$INITIAL_URL" \
+      --origin "$ORIGIN" \
+      --session-key "$SESSION_KEY" \
+      --mode gui \
+      ${PROFILE_DIR:+--profile-dir "$PROFILE_DIR"} >/dev/null
     runtime="$(runtime_status)"
   fi
   printf '%s\n' "$runtime"
@@ -176,6 +233,7 @@ ensure_runtime_for_assist() {
 ensure_overlay_deps() {
   local missing=()
   local dep
+  local novnc_root="${AGENT_BROWSER_NOVNC_WEB_ROOT:-/usr/share/novnc}"
   for dep in x11vnc websockify; do
     if ! have_cmd "$dep"; then
       missing+=("$dep")
@@ -184,22 +242,46 @@ ensure_overlay_deps() {
   if [ "${#missing[@]}" -gt 0 ]; then
     die "missing dependencies: ${missing[*]}"
   fi
-  if [ ! -d /usr/share/novnc ]; then
-    die "/usr/share/novnc not found; install novnc or adjust the script for your distribution"
+  if [ ! -d "$novnc_root" ]; then
+    die "$novnc_root not found; install novnc or adjust the script for your distribution"
   fi
+}
+
+select_runtime_target() {
+  local targets_json="$1"
+  local target_url=""
+
+  if [ -n "$INITIAL_URL" ] && [ "$(derive_origin "$INITIAL_URL")" = "$ORIGIN" ]; then
+    target_url="$INITIAL_URL"
+  fi
+
+  select_target_helper select-target \
+    --origin "$ORIGIN" \
+    ${target_url:+--target-url "$target_url"} \
+    --targets-json "$targets_json"
 }
 
 start_assisted() {
   require_arg --url "$INITIAL_URL"
-  local runtime display runtime_mode
+  local runtime display runtime_mode novnc_root target_id challenge login_wall targets_json
   runtime="$(ensure_runtime_for_assist)"
   runtime_mode="$(runtime_value mode "$runtime")"
   display="$(runtime_value display "$runtime")"
   PROFILE_DIR="$(runtime_value profile_dir "$runtime")"
+  CDP_PORT="$(runtime_value cdp_port "$runtime")"
   [ "$runtime_mode" = "gui" ] || die "assisted flow requires runtime GUI mode"
   [ -n "$display" ] || die "runtime did not expose a display"
 
   ensure_overlay_deps
+  novnc_root="${AGENT_BROWSER_NOVNC_WEB_ROOT:-/usr/share/novnc}"
+
+  if ! pid_running "$(read_pid x11vnc)" && [ -z "${CLI_VNC_PORT:-}" ]; then
+    VNC_PORT="$(pick_free_tcp_port "$VNC_PORT")"
+  fi
+  if ! pid_running "$(read_pid websockify)" && [ -z "${CLI_NOVNC_PORT:-}" ]; then
+    NOVNC_PORT="$(pick_free_tcp_port "$NOVNC_PORT")"
+  fi
+
   write_state
 
   if ! pid_running "$(read_pid x11vnc)"; then
@@ -210,16 +292,16 @@ start_assisted() {
 
   if ! pid_running "$(read_pid websockify)"; then
     start_process websockify "$LOG_DIR/websockify.log" \
-      websockify --web=/usr/share/novnc "0.0.0.0:$NOVNC_PORT" "localhost:$VNC_PORT"
+      websockify --web="$novnc_root" "0.0.0.0:$NOVNC_PORT" "localhost:$VNC_PORT"
   fi
 
-  local target_id challenge login_wall
-  target_id="$(first_page_target_id "$(runtime_helper list-targets --run-dir "$RUNTIME_RUN_DIR")")"
+  targets_json="$(runtime_helper list-targets --run-dir "$RUNTIME_RUN_DIR" --origin "$ORIGIN" --session-key "$SESSION_KEY")"
+  target_id="$(select_runtime_target "$targets_json")"
   challenge=""
   login_wall=""
   if [ -n "$target_id" ]; then
-    challenge="$(runtime_helper check-page --run-dir "$RUNTIME_RUN_DIR" --cdp-port "$CDP_PORT" --target-id "$target_id" --check challenge 2>/dev/null || true)"
-    login_wall="$(runtime_helper check-page --run-dir "$RUNTIME_RUN_DIR" --cdp-port "$CDP_PORT" --target-id "$target_id" --check login-wall 2>/dev/null || true)"
+    challenge="$(runtime_helper check-page --run-dir "$RUNTIME_RUN_DIR" --origin "$ORIGIN" --session-key "$SESSION_KEY" --cdp-port "$CDP_PORT" --target-id "$target_id" --check challenge 2>/dev/null || true)"
+    login_wall="$(runtime_helper check-page --run-dir "$RUNTIME_RUN_DIR" --origin "$ORIGIN" --session-key "$SESSION_KEY" --cdp-port "$CDP_PORT" --target-id "$target_id" --check login-wall 2>/dev/null || true)"
   fi
 
   log "noVNC URL: http://127.0.0.1:$NOVNC_PORT/vnc.html?autoconnect=1&resize=remote"
@@ -235,6 +317,7 @@ start_assisted() {
 capture_session() {
   require_arg --origin "$ORIGIN"
   local runtime target_json target_id challenge_json login_json page_json browser_pid display cdp_port
+
   runtime="$(runtime_status)"
   if ! printf '%s\n' "$runtime" | grep -q '^runtime: running$'; then
     die "no verified browser runtime is available"
@@ -247,13 +330,13 @@ capture_session() {
   require_arg browser_pid "$browser_pid"
   require_arg cdp_port "$cdp_port"
 
-  target_json="$(runtime_helper list-targets --run-dir "$RUNTIME_RUN_DIR")"
-  target_id="$(first_page_target_id "$target_json")"
+  target_json="$(runtime_helper list-targets --run-dir "$RUNTIME_RUN_DIR" --origin "$ORIGIN" --session-key "$SESSION_KEY")"
+  target_id="$(select_runtime_target "$target_json")"
   [ -n "$target_id" ] || die "no page target is available for capture"
 
-  challenge_json="$(runtime_helper check-page --run-dir "$RUNTIME_RUN_DIR" --cdp-port "$cdp_port" --target-id "$target_id" --check challenge)"
-  login_json="$(runtime_helper check-page --run-dir "$RUNTIME_RUN_DIR" --cdp-port "$cdp_port" --target-id "$target_id" --check login-wall)"
-  page_json="$(runtime_helper check-page --run-dir "$RUNTIME_RUN_DIR" --cdp-port "$cdp_port" --target-id "$target_id" --check page-info)"
+  challenge_json="$(runtime_helper check-page --run-dir "$RUNTIME_RUN_DIR" --origin "$ORIGIN" --session-key "$SESSION_KEY" --cdp-port "$cdp_port" --target-id "$target_id" --check challenge)"
+  login_json="$(runtime_helper check-page --run-dir "$RUNTIME_RUN_DIR" --origin "$ORIGIN" --session-key "$SESSION_KEY" --cdp-port "$cdp_port" --target-id "$target_id" --check login-wall)"
+  page_json="$(runtime_helper check-page --run-dir "$RUNTIME_RUN_DIR" --origin "$ORIGIN" --session-key "$SESSION_KEY" --cdp-port "$cdp_port" --target-id "$target_id" --check page-info)"
 
   if printf '%s' "$challenge_json" | grep -q '"hasChallenge": true'; then
     die "verification has not succeeded yet; challenge page still active"
@@ -262,6 +345,7 @@ capture_session() {
     die "verification has not succeeded yet; login wall still active"
   fi
 
+  write_state
   manifest_helper write \
     --root "$MANIFEST_ROOT" \
     --origin "$ORIGIN" \
@@ -284,7 +368,6 @@ stop_assisted() {
   log "assisted overlay stopped"
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || {
   usage
@@ -359,25 +442,10 @@ CLI_INITIAL_URL="$INITIAL_URL"
 CLI_PROFILE_DIR="$PROFILE_DIR"
 CLI_NOVNC_PORT="$NOVNC_PORT"
 CLI_VNC_PORT="$VNC_PORT"
+CLI_ORIGIN="$ORIGIN"
+CLI_SESSION_KEY="$SESSION_KEY"
 
-BASE_ROOT="${HOME}/.agent-browser"
-RUN_DIR="${RUN_DIR:-$BASE_ROOT/assist}"
-RUNTIME_RUN_DIR="${RUNTIME_RUN_DIR:-$BASE_ROOT/run}"
-MANIFEST_ROOT="${MANIFEST_ROOT:-$BASE_ROOT}"
-INITIAL_URL="${INITIAL_URL:-https://example.com}"
-NOVNC_PORT="${NOVNC_PORT:-6080}"
-VNC_PORT="${VNC_PORT:-5900}"
-LOG_DIR="${LOG_DIR:-$BASE_ROOT/logs}"
-STATE_FILE="$RUN_DIR/assist.env"
-load_state
-
-RUN_DIR="${CLI_RUN_DIR:-$RUN_DIR}"
-MANIFEST_ROOT="${CLI_MANIFEST_ROOT:-$MANIFEST_ROOT}"
-INITIAL_URL="${CLI_INITIAL_URL:-$INITIAL_URL}"
-PROFILE_DIR="${CLI_PROFILE_DIR:-$PROFILE_DIR}"
-NOVNC_PORT="${CLI_NOVNC_PORT:-$NOVNC_PORT}"
-VNC_PORT="${CLI_VNC_PORT:-$VNC_PORT}"
-STATE_FILE="$RUN_DIR/assist.env"
+resolve_context
 
 case "$COMMAND" in
   start)

@@ -7,9 +7,16 @@ The standalone runtime layer below it is `scripts/browser-runtime.sh`, which han
 - headless direct browsing
 - GUI browsing on Xvfb for challenge auto-pass attempts
 - CDP target discovery
+- best-match page target selection by exact URL, then origin, then host
 - manifest-based attach and verify operations
 
 `scripts/assisted-session.sh` layers `x11vnc` and `websockify` on top of a GUI runtime when the user must see and operate the same live browser instance.
+
+Current runtime behavior:
+
+- derive scoped `run_dir`, `profile_dir`, and `log_dir` from `origin + session-key`
+- auto-pick free CDP ports, X displays, VNC ports, and noVNC ports unless explicitly pinned
+- keep the assisted overlay attached to the same live browser instance instead of opening a fresh browser
 
 Expected control flow:
 
@@ -23,8 +30,8 @@ Expected control flow:
 Typical commands:
 
 ```bash
-scripts/assisted-session.sh start --url 'https://target.example'
-scripts/assisted-session.sh status
-scripts/assisted-session.sh capture --origin 'https://target.example' --block-reason login-wall
-scripts/assisted-session.sh stop
+scripts/assisted-session.sh start --url 'https://target.example' --origin 'https://target.example' --session-key default
+scripts/assisted-session.sh status --origin 'https://target.example' --session-key default
+scripts/assisted-session.sh capture --origin 'https://target.example' --session-key default --block-reason login-wall
+scripts/assisted-session.sh stop --origin 'https://target.example' --session-key default
 ```

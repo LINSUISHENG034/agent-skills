@@ -2,6 +2,13 @@
 
 `session-manifest.sh` stores durable per-origin browser session records under `~/.agent-browser/` by default.
 
+The runtime layer now derives browser state paths from both `origin` and `session-key`, so one manifest no longer implies one global browser process:
+
+- runtime: `~/.agent-browser/run/<origin-key>/<session-key>/`
+- assisted overlay: `~/.agent-browser/assist/<origin-key>/<session-key>/`
+- profile: `~/.agent-browser/profiles/<origin-key>/<session-key>/`
+- logs: `~/.agent-browser/logs/<origin-key>/<session-key>/`
+
 Storage layout:
 
 - `sessions/<origin-key>/<session-key>.json`
@@ -40,6 +47,12 @@ Manifest fields currently supported by the helper include:
 - `xvfb_display`
 - `xvfb_pid`
 - `novnc_port`
+
+Operational notes:
+
+- Prefer reusing the same `session-key` across wrapper, runtime, and assisted commands so they resolve the same scoped paths.
+- The manifest does not guarantee the browser process is still alive. Always follow selection with `browser-runtime.sh verify`.
+- When multiple same-origin sessions exist, keep using `account_hint` or `task_scope` to avoid ambiguous reuse.
 
 Selection rules:
 

@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/runtime-common.sh"
+
 usage() {
   cat <<'EOF'
 Usage:
   browser-runtime.sh start --url URL [--mode headless|gui] [options]
-  browser-runtime.sh status [--run-dir DIR]
-  browser-runtime.sh list-targets [--run-dir DIR] [--cdp-port PORT]
-  browser-runtime.sh check-page --cdp-port PORT --check TYPE [--target-id ID]
+  browser-runtime.sh status [options]
+  browser-runtime.sh list-targets [options]
+  browser-runtime.sh check-page --check TYPE [options]
+  browser-runtime.sh select-target [--origin URL] [--target-url URL] [--targets-json JSON]
   browser-runtime.sh attach --origin URL --session-key KEY [--manifest-root DIR]
   browser-runtime.sh verify --origin URL --session-key KEY [--manifest-root DIR]
-  browser-runtime.sh stop [--run-dir DIR]
+  browser-runtime.sh stop [options]
 
 Options:
   --browser CMD
@@ -18,8 +23,13 @@ Options:
   --display NUM
   --manifest-root DIR
   --mode MODE
+  --origin URL
   --profile-dir DIR
   --run-dir DIR
+  --session-key KEY
+  --target-id ID
+  --target-url URL
+  --targets-json JSON
   --url URL
 EOF
 }
@@ -81,6 +91,8 @@ write_state() {
   mkdir -p "$RUN_DIR"
   cat >"$STATE_FILE" <<EOF
 MODE=$(printf '%q' "$MODE")
+ORIGIN=$(printf '%q' "$ORIGIN")
+SESSION_KEY=$(printf '%q' "$SESSION_KEY")
 INITIAL_URL=$(printf '%q' "$INITIAL_URL")
 PROFILE_DIR=$(printf '%q' "$PROFILE_DIR")
 RUN_DIR=$(printf '%q' "$RUN_DIR")
@@ -138,11 +150,12 @@ stop_process() {
 }
 
 wait_for_display() {
-  local socket="/tmp/.X11-unix/X${DISPLAY_NUM}"
+  local socket_dir="${AGENT_BROWSER_X11_SOCKET_DIR:-/tmp/.X11-unix}"
+  local socket="${socket_dir}/X${DISPLAY_NUM}"
   local _i
 
   for _i in 1 2 3 4 5 6 7 8 9 10; do
-    if [ -S "$socket" ]; then
+    if [ -e "$socket" ]; then
       if ! have_cmd xdpyinfo || DISPLAY=":$DISPLAY_NUM" xdpyinfo >/dev/null 2>&1; then
         return 0
       fi
@@ -189,17 +202,68 @@ cdp_eval() {
   "${AGENT_BROWSER_CDP_EVAL:-$SCRIPT_DIR/cdp-eval.py}" "$@"
 }
 
-default_paths() {
-  local base_root
-  base_root="${HOME}/.agent-browser"
-  RUN_DIR="${RUN_DIR:-$base_root/run}"
-  MANIFEST_ROOT="${MANIFEST_ROOT:-$base_root}"
-  PROFILE_DIR="${PROFILE_DIR:-$base_root/profiles/default}"
-  LOG_DIR="${LOG_DIR:-$base_root/logs}"
-  MODE="${MODE:-headless}"
-  INITIAL_URL="${INITIAL_URL:-https://example.com}"
-  CDP_PORT="${CDP_PORT:-19222}"
-  DISPLAY_NUM="${DISPLAY_NUM:-88}"
+manifest_field() {
+  local field="$1"
+  local payload="$2"
+  python3 - "$field" "$payload" <<'PY'
+import json
+import sys
+
+field = sys.argv[1]
+payload = json.loads(sys.argv[2])
+value = payload.get(field)
+if value is None:
+    raise SystemExit(1)
+if isinstance(value, (dict, list)):
+    print(json.dumps(value))
+else:
+    print(value)
+PY
+}
+
+resolve_context() {
+  BASE_ROOT="${HOME}/.agent-browser"
+  MANIFEST_ROOT="${MANIFEST_ROOT:-$BASE_ROOT}"
+  SESSION_KEY="${SESSION_KEY:-default}"
+
+  if [ -z "$ORIGIN" ] && [ -n "$INITIAL_URL" ]; then
+    ORIGIN="$(derive_origin "$INITIAL_URL")"
+  fi
+  if [ -z "$ORIGIN" ]; then
+    ORIGIN="https://example.com"
+  fi
+  if [ -z "$INITIAL_URL" ]; then
+    INITIAL_URL="$ORIGIN"
+  fi
+
+  if [ -z "$RUN_DIR" ]; then
+    RUN_DIR="$(runtime_scoped_path "$BASE_ROOT" run "$ORIGIN" "$SESSION_KEY")"
+  fi
+  STATE_FILE="$RUN_DIR/runtime.env"
+  load_state
+
+  RUN_DIR="${CLI_RUN_DIR:-${RUN_DIR:-}}"
+  MANIFEST_ROOT="${CLI_MANIFEST_ROOT:-${MANIFEST_ROOT:-$BASE_ROOT}}"
+  MODE="${CLI_MODE:-${MODE:-headless}}"
+  INITIAL_URL="${CLI_INITIAL_URL:-${INITIAL_URL:-$ORIGIN}}"
+  ORIGIN="${CLI_ORIGIN:-${ORIGIN:-$(derive_origin "$INITIAL_URL")}}"
+  SESSION_KEY="${CLI_SESSION_KEY:-${SESSION_KEY:-default}}"
+  PROFILE_DIR="${CLI_PROFILE_DIR:-${PROFILE_DIR:-}}"
+  LOG_DIR="${LOG_DIR:-}"
+  CDP_PORT="${CLI_CDP_PORT:-${CDP_PORT:-19222}}"
+  DISPLAY_NUM="${CLI_DISPLAY_NUM:-${DISPLAY_NUM:-88}}"
+  BROWSER_CMD="${CLI_BROWSER_CMD:-${BROWSER_CMD:-}}"
+
+  if [ -z "$RUN_DIR" ]; then
+    RUN_DIR="$(runtime_scoped_path "$BASE_ROOT" run "$ORIGIN" "$SESSION_KEY")"
+  fi
+  if [ -z "$PROFILE_DIR" ]; then
+    PROFILE_DIR="$(runtime_scoped_path "$BASE_ROOT" profiles "$ORIGIN" "$SESSION_KEY")"
+  fi
+  if [ -z "$LOG_DIR" ]; then
+    LOG_DIR="$(runtime_scoped_path "$BASE_ROOT" logs "$ORIGIN" "$SESSION_KEY")"
+  fi
+
   STATE_FILE="$RUN_DIR/runtime.env"
 }
 
@@ -212,8 +276,44 @@ require_browser_deps() {
   fi
 }
 
+select_target_from_json() {
+  local payload="$1"
+  python3 - "$ORIGIN" "$TARGET_URL" "$payload" <<'PY'
+import json
+import sys
+from urllib.parse import urlparse
+
+origin, target_url, payload = sys.argv[1:]
+targets = [target for target in json.loads(payload or "[]") if target.get("type") == "page"]
+
+def host(value: str) -> str:
+    parsed = urlparse(value)
+    return parsed.netloc
+
+def score(target):
+    url = target.get("url", "")
+    if target_url and url == target_url:
+        return (0, url)
+    if origin and url.startswith(origin):
+        return (1, url)
+    if origin and host(url) and host(url) == host(origin):
+        return (2, url)
+    return (9, url)
+
+if targets:
+    print(sorted(targets, key=score)[0].get("id", ""))
+PY
+}
+
 start_runtime() {
   require_browser_deps
+  if [ -z "${CLI_CDP_PORT:-}" ]; then
+    CDP_PORT="$(pick_free_tcp_port "$CDP_PORT")"
+  fi
+  if [ "$MODE" = "gui" ] && [ -z "${CLI_DISPLAY_NUM:-}" ]; then
+    DISPLAY_NUM="$(pick_free_display "$DISPLAY_NUM")"
+  fi
+
   mkdir -p "$PROFILE_DIR" "$LOG_DIR" "$RUN_DIR"
   if runtime_running; then
     die "browser runtime already running; use stop or status first"
@@ -258,6 +358,8 @@ start_runtime() {
 status_runtime() {
   printf 'runtime: %s\n' "$(runtime_running && printf 'running' || printf 'stopped')"
   printf 'mode: %s\n' "$MODE"
+  printf 'origin: %s\n' "$ORIGIN"
+  printf 'session_key: %s\n' "$SESSION_KEY"
   printf 'url: %s\n' "$INITIAL_URL"
   printf 'profile_dir: %s\n' "$PROFILE_DIR"
   printf 'run_dir: %s\n' "$RUN_DIR"
@@ -273,8 +375,8 @@ status_runtime() {
 }
 
 list_targets() {
-  local port
-  port="${CDP_PORT}"
+  local port="${CDP_PORT}"
+
   if ! runtime_running && [ ! -f "$STATE_FILE" ]; then
     printf '[]\n'
     return 0
@@ -286,28 +388,16 @@ list_targets() {
 }
 
 check_page() {
-  require_arg --cdp-port "$CDP_PORT"
   require_arg --check "$CHECK_TYPE"
+  require_arg --cdp-port "$CDP_PORT"
   cdp_eval --port "$CDP_PORT" ${TARGET_ID:+--target-id "$TARGET_ID"} --check "$CHECK_TYPE"
 }
 
-manifest_field() {
-  local field="$1"
-  local payload="$2"
-  python3 - "$field" "$payload" <<'PY'
-import json
-import sys
-
-field = sys.argv[1]
-payload = json.loads(sys.argv[2])
-value = payload.get(field)
-if value is None:
-    sys.exit(1)
-if isinstance(value, (dict, list)):
-    print(json.dumps(value))
-else:
-    print(value)
-PY
+select_target() {
+  if [ -z "$TARGETS_JSON" ]; then
+    TARGETS_JSON="$(list_targets)"
+  fi
+  select_target_from_json "$TARGETS_JSON"
 }
 
 load_manifest() {
@@ -318,6 +408,7 @@ attach_session() {
   require_arg --origin "$ORIGIN"
   require_arg --session-key "$SESSION_KEY"
   local manifest browser_pid
+
   manifest="$(load_manifest)" || exit $?
   browser_pid="$(manifest_field browser_pid "$manifest" || true)"
   [ -n "$browser_pid" ] || die "manifest missing browser_pid"
@@ -329,6 +420,7 @@ verify_session() {
   require_arg --origin "$ORIGIN"
   require_arg --session-key "$SESSION_KEY"
   local manifest browser_pid cdp_port target_id targets
+
   manifest="$(load_manifest)" || exit $?
   browser_pid="$(manifest_field browser_pid "$manifest" || true)"
   cdp_port="$(manifest_field cdp_port "$manifest" || true)"
@@ -356,7 +448,6 @@ stop_runtime() {
   log "runtime stopped"
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || {
   usage
@@ -374,6 +465,8 @@ DISPLAY_NUM=""
 BROWSER_CMD=""
 CHECK_TYPE=""
 TARGET_ID=""
+TARGET_URL=""
+TARGETS_JSON=""
 ORIGIN=""
 SESSION_KEY=""
 
@@ -419,6 +512,14 @@ while [ "$#" -gt 0 ]; do
       TARGET_ID="$2"
       shift 2
       ;;
+    --target-url)
+      TARGET_URL="$2"
+      shift 2
+      ;;
+    --targets-json)
+      TARGETS_JSON="$2"
+      shift 2
+      ;;
     --origin)
       ORIGIN="$2"
       shift 2
@@ -445,19 +546,10 @@ CLI_PROFILE_DIR="$PROFILE_DIR"
 CLI_CDP_PORT="$CDP_PORT"
 CLI_DISPLAY_NUM="$DISPLAY_NUM"
 CLI_BROWSER_CMD="$BROWSER_CMD"
+CLI_ORIGIN="$ORIGIN"
+CLI_SESSION_KEY="$SESSION_KEY"
 
-default_paths
-load_state
-
-RUN_DIR="${CLI_RUN_DIR:-$RUN_DIR}"
-MANIFEST_ROOT="${CLI_MANIFEST_ROOT:-$MANIFEST_ROOT}"
-MODE="${CLI_MODE:-$MODE}"
-INITIAL_URL="${CLI_INITIAL_URL:-$INITIAL_URL}"
-PROFILE_DIR="${CLI_PROFILE_DIR:-$PROFILE_DIR}"
-CDP_PORT="${CLI_CDP_PORT:-$CDP_PORT}"
-DISPLAY_NUM="${CLI_DISPLAY_NUM:-$DISPLAY_NUM}"
-BROWSER_CMD="${CLI_BROWSER_CMD:-$BROWSER_CMD}"
-STATE_FILE="$RUN_DIR/runtime.env"
+resolve_context
 
 case "$COMMAND" in
   start)
@@ -478,6 +570,9 @@ case "$COMMAND" in
     ;;
   check-page)
     check_page
+    ;;
+  select-target)
+    select_target
     ;;
   attach)
     attach_session

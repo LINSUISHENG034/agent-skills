@@ -7,6 +7,7 @@
 - "This dashboard on the Ubuntu host is stuck on Verify you are human. Recover it."
 - "Browse x.com from the server and tell me if I need to log in."
 - "Use the old verified server-side browser instead of launching a fresh one."
+- "Use the Ubuntu host browser skill to open this protected page and tell me whether it needs noVNC help."
 
 ## Should Not Trigger
 
@@ -20,3 +21,4 @@
 
 - Same-origin multi-session recovery: "Reuse the `acct-b` session for `https://example.com` instead of the other saved one."
 - Direct-browse path: "Open `https://example.com` on the Ubuntu host and tell me the page title if it loads publicly."
+- High-level wrapper path: "Open `https://foxcode.rjj.cc/api-keys` from the Ubuntu host and reuse the existing verified session if possible."

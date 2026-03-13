@@ -60,11 +60,20 @@ Always work in this order:
 5. Escalate to GUI-mode auto-browse when headless mode is blocked by a challenge
 6. Ask the user for help only after local recovery paths are exhausted
 
-### 1. Discover Existing Session State
-
-Use the manifest helper first:
+Preferred autonomous entrypoint:
 
 ```bash
+{baseDir}/scripts/open-protected-page.sh --url 'https://target.example' --session-key default
+```
+
+Use the lower-level scripts below when you need to inspect or repair an individual stage manually.
+
+### 1. Discover Existing Session State
+
+Use the manifest helper first, or let the wrapper do it for you:
+
+```bash
+{baseDir}/scripts/open-protected-page.sh --url 'https://target.example' --session-key default
 {baseDir}/scripts/session-manifest.sh list
 {baseDir}/scripts/session-manifest.sh select --origin 'https://target.example' --account-hint 'acct-a'
 ```
@@ -91,7 +100,7 @@ When validation succeeds, keep using the recorded browser context:
 
 ```bash
 {baseDir}/scripts/browser-runtime.sh attach --origin 'https://target.example' --session-key default
-{baseDir}/scripts/browser-runtime.sh list-targets
+{baseDir}/scripts/browser-runtime.sh list-targets --origin 'https://target.example' --session-key default
 ```
 
 ### 4. Direct Browse First
@@ -108,9 +117,11 @@ For public or low-risk pages, try headless mode before escalating:
 Use CDP page checks to decide whether the page is blocked by an anti-bot challenge or a login wall:
 
 ```bash
-{baseDir}/scripts/browser-runtime.sh check-page --cdp-port 19222 --target-id TARGET_ID --check challenge
-{baseDir}/scripts/browser-runtime.sh check-page --cdp-port 19222 --target-id TARGET_ID --check login-wall
-{baseDir}/scripts/browser-runtime.sh check-page --cdp-port 19222 --target-id TARGET_ID --check page-info
+TARGETS_JSON="$({baseDir}/scripts/browser-runtime.sh list-targets --origin 'https://target.example' --session-key default)"
+TARGET_ID="$({baseDir}/scripts/browser-runtime.sh select-target --origin 'https://target.example' --targets-json "$TARGETS_JSON")"
+{baseDir}/scripts/browser-runtime.sh check-page --origin 'https://target.example' --session-key default --target-id "$TARGET_ID" --check challenge
+{baseDir}/scripts/browser-runtime.sh check-page --origin 'https://target.example' --session-key default --target-id "$TARGET_ID" --check login-wall
+{baseDir}/scripts/browser-runtime.sh check-page --origin 'https://target.example' --session-key default --target-id "$TARGET_ID" --check page-info
 ```
 
 Challenge indicators:
@@ -140,14 +151,14 @@ When headless mode is challenge-blocked but not login-walled, move to GUI mode o
 If GUI mode still leaves the page blocked or the site needs credentials, start the assisted overlay:
 
 ```bash
-{baseDir}/scripts/assisted-session.sh start --url 'https://target.example'
-{baseDir}/scripts/assisted-session.sh status
+{baseDir}/scripts/assisted-session.sh start --url 'https://target.example' --origin 'https://target.example' --session-key default
+{baseDir}/scripts/assisted-session.sh status --origin 'https://target.example' --session-key default
 ```
 
 After the user finishes the blocked step and the host-side verification is clean, capture the manifest for later reuse:
 
 ```bash
-{baseDir}/scripts/assisted-session.sh capture --origin 'https://target.example'
+{baseDir}/scripts/assisted-session.sh capture --origin 'https://target.example' --session-key default
 ```
 
 ## Failure And Recovery Rules
@@ -161,6 +172,7 @@ After the user finishes the blocked step and the host-side verification is clean
 ## Key Files
 
 - `scripts/session-manifest.sh`: manifest CRUD, indexing, and safe selection
+- `scripts/open-protected-page.sh`: high-level protected-page orchestration for OpenClaw
 - `scripts/cdp-eval.py`: standard-library CDP WebSocket evaluation helper
 - `scripts/browser-runtime.sh`: headless and GUI runtime management
 - `scripts/assisted-session.sh`: noVNC-assisted flow layered on the same live browser session

@@ -23,8 +23,30 @@ chmod +x "$TMP_DIR/cdp-stub.py"
 
 status_output="$("$BASE_DIR/browser-runtime.sh" status --run-dir "$TMP_DIR")"
 printf '%s\n' "$status_output" | grep -q "stopped"
+
+mkdir -p "$TMP_DIR/home"
+isolated_status="$(
+  HOME="$TMP_DIR/home" "$BASE_DIR/browser-runtime.sh" status \
+    --url "https://foxcode.rjj.cc/api-keys" \
+    --session-key "foxcode-main"
+)"
+printf '%s\n' "$isolated_status" | grep -q "run_dir: $TMP_DIR/home/.agent-browser/run/https___foxcode_rjj_cc/foxcode-main"
+printf '%s\n' "$isolated_status" | grep -q "profile_dir: $TMP_DIR/home/.agent-browser/profiles/https___foxcode_rjj_cc/foxcode-main"
+
 list_output="$("$BASE_DIR/browser-runtime.sh" list-targets --run-dir "$TMP_DIR")"
 printf '%s\n' "$list_output" | grep -q '^\[\]$'
+
+selected_target="$(
+  "$BASE_DIR/browser-runtime.sh" select-target \
+    --origin "https://foxcode.rjj.cc" \
+    --target-url "https://foxcode.rjj.cc/api-keys" \
+    --targets-json '[
+      {"id":"page-login","type":"page","url":"https://example.com/login"},
+      {"id":"page-foxcode","type":"page","url":"https://foxcode.rjj.cc/api-keys"}
+    ]'
+)"
+printf '%s\n' "$selected_target" | grep -q '^page-foxcode$'
+
 if "$BASE_DIR/browser-runtime.sh" attach --run-dir "$TMP_DIR" --origin "https://example.com" --session-key "missing" >/dev/null 2>&1; then
   echo "expected attach with missing session to fail"
   exit 1
