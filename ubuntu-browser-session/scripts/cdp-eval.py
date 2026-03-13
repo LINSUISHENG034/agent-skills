@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 
 TIMEOUT_SECONDS = 5
-USER_AGENT = "agent-browser-ubuntu-server/cdp-eval"
+USER_AGENT = "ubuntu-browser-session/cdp-eval"
 
 
 class CdpError(RuntimeError):

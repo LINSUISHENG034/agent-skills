@@ -1,9 +1,9 @@
 ---
-name: agent-browser-ubuntu-server
+name: ubuntu-browser-session
 description: Use when a request needs a real Ubuntu Server browser session for protected-site browsing, session reuse, challenge recovery, or host-side page inspection with minimal repeated user assistance.
 ---
 
-# Agent Browser Ubuntu Server
+# Ubuntu Browser Session
 
 Standalone browser workflow for Ubuntu Server hosts that keeps session recovery centered on a durable `session manifest`, not just exported cookies.
 

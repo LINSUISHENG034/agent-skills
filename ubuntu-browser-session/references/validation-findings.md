@@ -17,7 +17,7 @@ Manual wrapper validation on Ubuntu Server host:
 
 Real OpenClaw validation on 2026-03-13:
 
-- the managed skill loads from `~/.openclaw/skills/agent-browser-ubuntu-server/`
+- the managed skill loads from `~/.openclaw/skills/ubuntu-browser-session/` for the renamed canonical identity
 - `openclaw agent --json` completes after Gateway fallback to embedded mode
 - OpenClaw still returned page quota values for `foxcode.rjj.cc`
 

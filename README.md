@@ -16,7 +16,7 @@ Maintainer-facing reference material lives under `docs/`.
 
 ## Current Skills
 
-- `agent-browser-ubuntu-server`
+- `ubuntu-browser-session`
   - Standalone Ubuntu Server browser workflow for protected sites, live session reuse, challenge recovery, and noVNC-assisted session capture.
 - `deployment-host-diagnostics`
   - Host-side diagnostics for OpenClaw deployments using live command-backed evidence and layered troubleshooting.
@@ -71,7 +71,7 @@ npx clawhub@latest install agent-browser
 
 `host-assisted-browser-login` is designed to work with an external browser-interaction skill such as `agent-browser`.
 
-`agent-browser-ubuntu-server` covers a different boundary: it is a standalone Ubuntu Server browser skill that owns protected-site session discovery, reuse, recovery, and assisted capture inside one workflow.
+`ubuntu-browser-session` is the canonical public name for the former `agent-browser-ubuntu-server` skill. It covers a different boundary: it is a standalone Ubuntu Server browser skill that owns protected-site session discovery, reuse, recovery, and assisted capture inside one workflow.
 
 Companion-skill handoff remains useful for `host-assisted-browser-login`:
 
