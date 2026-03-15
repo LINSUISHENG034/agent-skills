@@ -112,7 +112,9 @@ Use the LAN URL only when the host firewall and network allow direct access.
 {baseDir}/scripts/assisted-session.sh capture --origin 'https://target.example' --session-key default
 ```
 
-That updates the manifest and the site session registry for later reuse.
+That finalizes the wrapper-managed session state and updates the site session registry for later reuse.
+
+Do not use `assisted-session.sh start` as a normal entrypoint. Start with `open-protected-page.sh` so site-centric profile resolution and wrong-page recovery stay in effect.
 
 Only reach for unrelated browser tooling after this workflow fails to complete the task and you have a concrete reason the host browser workflow is insufficient.
 

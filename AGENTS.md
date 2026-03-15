@@ -12,6 +12,8 @@ This repository is for publishable skills plus local-only development support fi
 ## Skill Authoring Principles
 
 - Start from 2-3 concrete use cases before writing the skill structure or scripts.
+- Keep each skill scoped to the problem it is supposed to solve; do not let a browser-session or environment skill grow into general downstream task logic that belongs to the agent.
+- When a skill's purpose is session reuse, host access, or environment setup, evaluate it on whether it preserves the correct execution context and access path, not on whether the agent can always complete later site-specific content extraction.
 - Use progressive disclosure:
   - keep YAML frontmatter short and focused on trigger conditions
   - keep `SKILL.md` focused on workflow and decision rules

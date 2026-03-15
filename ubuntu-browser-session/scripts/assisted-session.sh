@@ -61,6 +61,25 @@ profile_helper() {
   "${AGENT_BROWSER_PROFILE_HELPER:-$SCRIPT_DIR/profile-resolution.sh}" "$@"
 }
 
+manifest_field() {
+  local field="$1"
+  local payload="$2"
+  python3 - "$field" "$payload" <<'PY'
+import json
+import sys
+
+field = sys.argv[1]
+payload = json.loads(sys.argv[2])
+value = payload.get(field)
+if value is None:
+    raise SystemExit(1)
+if isinstance(value, (dict, list)):
+    print(json.dumps(value))
+else:
+    print(value)
+PY
+}
+
 site_registry_helper() {
   "${AGENT_BROWSER_SITE_REGISTRY_HELPER:-$SCRIPT_DIR/site-session-registry.sh}" "$@"
 }
@@ -201,28 +220,86 @@ write_identity_metadata() {
 }
 
 write_site_session() {
-  local page_json="$1"
-  local final_url site
-  final_url="$(
-    python3 - "$page_json" "$ORIGIN" <<'PY'
-import json
-import sys
-
-payload, origin = sys.argv[1:]
-try:
-    parsed = json.loads(payload) if payload else {}
-except json.JSONDecodeError:
-    parsed = {}
-print(parsed.get("url") or origin)
-PY
-  )"
-  site="$(site_key "$final_url")"
+  local site
+  site="$(site_key "$ORIGIN")"
   site_registry_helper write \
     --root "$BASE_ROOT" \
     --site "$site" \
     --session-key "$SESSION_KEY" \
     --profile-dir "$PROFILE_DIR" \
     --source-origin "$ORIGIN" >/dev/null
+}
+
+page_matches_target() {
+  local page_json="$1"
+  python3 - "$page_json" "${INITIAL_URL:-}" "$ORIGIN" <<'PY'
+import json
+import sys
+from urllib.parse import urlparse, urlunparse
+
+page_payload, initial_url, origin = sys.argv[1:]
+
+try:
+    page_url = (json.loads(page_payload or "{}").get("url") or "").strip()
+except json.JSONDecodeError:
+    page_url = ""
+
+def normalize(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return raw.rstrip("/")
+    path = parsed.path or ""
+    if path not in ("", "/"):
+        path = path.rstrip("/")
+    else:
+        path = ""
+    return urlunparse((
+        parsed.scheme.lower(),
+        parsed.netloc.lower(),
+        path,
+        parsed.params,
+        parsed.query,
+        "",
+    ))
+
+page = normalize(page_url)
+initial = normalize(initial_url)
+origin_value = normalize(origin)
+
+if not page:
+    raise SystemExit(1)
+
+if initial and initial != origin_value:
+    raise SystemExit(0 if page == initial else 1)
+
+if origin_value and (page == origin_value or page.startswith(origin_value + "/")):
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+resolve_profile_dir() {
+  local resolved_profile
+  if resolved_profile="$(
+    profile_helper resolve \
+      --root "$BASE_ROOT" \
+      --manifest-root "$MANIFEST_ROOT" \
+      --origin "$ORIGIN" \
+      --session-key "$SESSION_KEY"
+  )"; then
+    PROFILE_DIR="$(manifest_field profile_dir "$resolved_profile")"
+    return 0
+  fi
+
+  local resolve_status=$?
+  if [ "$resolve_status" -eq 2 ]; then
+    die "ambiguous reusable profiles for $ORIGIN"
+  fi
+  return "$resolve_status"
 }
 
 resolve_context() {
@@ -259,11 +336,14 @@ resolve_context() {
   if [ -z "$RUN_DIR" ]; then
     RUN_DIR="$(runtime_scoped_path "$BASE_ROOT" assist "$ORIGIN" "$SESSION_KEY")"
   fi
+  if [ -n "$INITIAL_URL" ] && [ "$(derive_origin "$INITIAL_URL")" != "$ORIGIN" ]; then
+    INITIAL_URL="$ORIGIN"
+  fi
   if [ -z "$RUNTIME_RUN_DIR" ]; then
     RUNTIME_RUN_DIR="$(runtime_scoped_path "$BASE_ROOT" run "$ORIGIN" "$SESSION_KEY")"
   fi
   if [ -z "$PROFILE_DIR" ]; then
-    PROFILE_DIR="$(runtime_scoped_path "$BASE_ROOT" profiles "$ORIGIN" "$SESSION_KEY")"
+    resolve_profile_dir
   fi
   if [ -z "$LOG_DIR" ]; then
     LOG_DIR="$(runtime_scoped_path "$BASE_ROOT" logs "$ORIGIN" "$SESSION_KEY")"
@@ -417,6 +497,9 @@ capture_session() {
   if printf '%s' "$login_json" | grep -q '"hasLoginWall": true'; then
     die "verification has not succeeded yet; login wall still active"
   fi
+  if ! page_matches_target "$page_json"; then
+    die "verification has not succeeded yet; browser is not on the requested target page"
+  fi
 
   write_state
   manifest_helper write \
@@ -432,7 +515,7 @@ capture_session() {
     --display "$display" \
     ${BLOCK_REASON:+--block-reason "$BLOCK_REASON"} >/dev/null
 
-  write_site_session "$page_json"
+  write_site_session
   write_identity_metadata "$page_json"
 
   printf '%s\n' "$page_json"

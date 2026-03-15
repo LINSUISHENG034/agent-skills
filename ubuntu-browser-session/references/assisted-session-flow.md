@@ -42,6 +42,8 @@ Use the LAN URL only when firewall and network policy allow direct access.
 
 ## Commands
 
+The wrapper is the supported entrypoint. Direct `assisted-session.sh` commands are for the bounded handoff after `open-protected-page.sh` has already selected the site profile and exposed noVNC.
+
 ```bash
 scripts/assisted-session.sh start --url 'https://target.example' --origin 'https://target.example' --session-key default
 scripts/assisted-session.sh status --origin 'https://target.example' --session-key default

@@ -131,18 +131,55 @@ print(value if isinstance(value, str) else "")
 PY
 }
 
+page_matches_target() {
+  local page_url="${1:-}"
+  python3 - "$page_url" "${INITIAL_URL:-}" "${ORIGIN:-}" <<'PY'
+import sys
+from urllib.parse import urlparse, urlunparse
+
+page_url, initial_url, origin = sys.argv[1:]
+
+def normalize(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return raw.rstrip("/")
+    path = parsed.path or ""
+    if path not in ("", "/"):
+        path = path.rstrip("/")
+    else:
+        path = ""
+    return urlunparse((
+        parsed.scheme.lower(),
+        parsed.netloc.lower(),
+        path,
+        parsed.params,
+        parsed.query,
+        "",
+    ))
+
+page = normalize(page_url)
+initial = normalize(initial_url)
+origin_value = normalize(origin)
+
+if initial and initial != origin_value:
+    raise SystemExit(0 if page == initial else 1)
+
+if origin_value and (page == origin_value or page.startswith(origin_value + "/")):
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
 page_ready() {
   local payload="$1"
   local page_url
   page_url="$(page_field "$payload" url)"
   page_loaded "$payload" || return 1
-  if [ -n "${INITIAL_URL:-}" ] && [ "$page_url" = "$INITIAL_URL" ]; then
-    return 0
-  fi
-  if [ -n "${ORIGIN:-}" ] && [[ "$page_url" == "$ORIGIN"* ]]; then
-    return 0
-  fi
-  return 1
+  page_matches_target "$page_url"
 }
 
 page_loaded() {

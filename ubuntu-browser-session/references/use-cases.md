@@ -21,6 +21,8 @@ Preferred path:
 - user completes login in noVNC only if needed
 - `scripts/assisted-session.sh capture --origin ... --session-key default`
 
+Direct `assisted-session.sh start` usage is not the normal operator path. Use the wrapper first so the site registry selects the correct reusable profile before any manual takeover.
+
 ## 2. Reuse The Default Site Identity
 
 User intent: agent should use the already logged-in browser context for a site without asking again.

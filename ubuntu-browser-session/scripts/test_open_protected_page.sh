@@ -145,6 +145,8 @@ OUT
           echo '{"title":"","url":"about:blank","bodySnippet":""}'
         elif [ "$(mode_value)" = "wrong-page" ] || [ "$(mode_value)" = "recover-mismatch" ]; then
           echo '{"title":"Google Account","url":"https://myaccount.google.com/","bodySnippet":"signed in"}'
+        elif [ "$(mode_value)" = "same-origin-wrong-page" ]; then
+          echo '{"title":"Foxcode Settings","url":"https://foxcode.rjj.cc/settings","bodySnippet":"settings"}'
         elif [ "$(mode_value)" = "recover-wrong-login" ]; then
           if [ -n "$STATE_FILE" ] && [ -f "$STATE_FILE" ] && [ "$(cat "$STATE_FILE")" = "recovered" ]; then
             echo '{"title":"API密钥管理 - NEW CLI","url":"https://foxcode.rjj.cc/api-keys","bodySnippet":"余额基数"}'
@@ -287,6 +289,23 @@ wrong_page_output="$(
     --session-key foxcode-main
 )"
 printf '%s\n' "$wrong_page_output" | grep -q '"status": "needs-user"'
+
+same_origin_wrong_page_output="$(
+  RUNTIME_STUB_MODE="same-origin-wrong-page" \
+  AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/browser-runtime-stub.sh" \
+  AGENT_BROWSER_ASSISTED_HELPER="$TMP_DIR/assisted-stub.sh" \
+  AGENT_BROWSER_PROFILE_HELPER="$TMP_DIR/profile-resolution-stub.sh" \
+  ASSISTED_STUB_LOG="$TMP_DIR/assisted.log" \
+  PROFILE_STUB_LOG="$TMP_DIR/profile.log" \
+  PROFILE_STUB_PROFILE_DIR="/tmp/resolved-profile" \
+  RUNTIME_STUB_LOG_FILE="$TMP_DIR/runtime.log" \
+  "$BASE_DIR/open-protected-page.sh" \
+    --url 'https://foxcode.rjj.cc/api-keys' \
+    --origin 'https://foxcode.rjj.cc' \
+    --session-key foxcode-main
+)"
+printf '%s\n' "$same_origin_wrong_page_output" | grep -q '"status": "needs-user"'
+printf '%s\n' "$same_origin_wrong_page_output" | grep -q '"reason": "target-mismatch"'
 
 recover_output="$(
   RUNTIME_STUB_MODE="recover-mismatch" \
