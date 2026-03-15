@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/runtime-common.sh"
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -30,10 +34,6 @@ timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
-sanitize() {
-  printf '%s' "$1" | sed 's/[^A-Za-z0-9]/_/g'
-}
-
 require_arg() {
   local name="$1"
   local value="$2"
@@ -49,7 +49,7 @@ init_paths() {
 }
 
 origin_key() {
-  sanitize "$1"
+  origin_slug "$1"
 }
 
 origin_dir() {

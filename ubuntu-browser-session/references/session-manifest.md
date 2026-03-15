@@ -1,62 +1,69 @@
-# Session Manifest
+# Session Storage
 
-`session-manifest.sh` stores durable per-origin browser session records under `~/.agent-browser/` by default.
+The skill now uses two durable layers:
 
-The runtime layer now derives browser state paths from both `origin` and `session-key`, so one manifest no longer implies one global browser process:
+1. per-origin manifests for live runtime verification
+2. a site session registry for default per-site identity reuse
 
-- runtime: `~/.agent-browser/run/<origin-key>/<session-key>/`
-- assisted overlay: `~/.agent-browser/assist/<origin-key>/<session-key>/`
-- profile: `~/.agent-browser/profiles/<origin-key>/<session-key>/`
-- logs: `~/.agent-browser/logs/<origin-key>/<session-key>/`
+## 1. Session Manifest
 
-Storage layout:
+`session-manifest.sh` stores exact runtime records under `~/.agent-browser/` by default.
 
-- `sessions/<origin-key>/<session-key>.json`
-- `index/<origin-key>.json`
+Current scoped layout:
 
-The helper intentionally fails ambiguous same-origin selection instead of choosing a session arbitrarily.
+- runtime: `run/<origin-key>/<session-key>/`
+- assisted overlay: `assist/<origin-key>/<session-key>/`
+- profile: `profiles/<origin-key>/<session-key>/`
+- logs: `logs/<origin-key>/<session-key>/`
+- manifests: `sessions/<origin-key>/<session-key>.json`
 
-Current CLI surface:
+Typical manifest commands:
 
 ```bash
 scripts/session-manifest.sh list
-scripts/session-manifest.sh write --origin 'https://example.com' --session-key acct-a-main --state ready --browser-pid 123
-scripts/session-manifest.sh index-show --origin 'https://example.com'
-scripts/session-manifest.sh select --origin 'https://example.com' --account-hint acct-a
-scripts/session-manifest.sh mark-stale --origin 'https://example.com' --session-key acct-a-main --reason 'browser exited'
+scripts/session-manifest.sh show --origin 'https://github.com' --session-key default
+scripts/session-manifest.sh write --origin 'https://github.com' --session-key default --state ready --browser-pid 123
+scripts/session-manifest.sh mark-stale --origin 'https://github.com' --session-key default --reason 'browser exited'
 ```
-
-Manifest fields currently supported by the helper include:
-
-- `origin`
-- `session_key`
-- `account_hint`
-- `task_scope`
-- `state`
-- `browser_pid`
-- `created_at`
-- `last_verified_at`
-- `block_reason`
-- `cdp_port`
-- `cdp_url`
-- `websocket_debugger_url`
-- `target_id`
-- `profile_dir`
-- `mode`
-- `display`
-- `xvfb_display`
-- `xvfb_pid`
-- `novnc_port`
 
 Operational notes:
 
-- Prefer reusing the same `session-key` across wrapper, runtime, and assisted commands so they resolve the same scoped paths.
-- The manifest does not guarantee the browser process is still alive. Always follow selection with `browser-runtime.sh verify`.
-- When multiple same-origin sessions exist, keep using `account_hint` or `task_scope` to avoid ambiguous reuse.
+- manifests track exact captured runtime details
+- they are still used for verification and compatibility fallback
+- they are not the primary product abstraction for default reuse anymore
 
-Selection rules:
+## 2. Site Session Registry
 
-- Return the exact session when `--account-hint` narrows the set to one candidate
-- Return the exact session when `--task-scope` narrows the set to one candidate
-- Fail with a non-zero exit code when multiple same-origin sessions remain ambiguous
-- Never silently choose an arbitrary same-origin session
+`site-session-registry.sh` stores the default durable identity by canonical site:
+
+- `github.com`
+- `google.com`
+- exact host for other sites unless an alias is intentionally added
+
+Storage file:
+
+- `index/site-sessions.json`
+
+Typical commands:
+
+```bash
+scripts/site-session-registry.sh show --site github.com
+scripts/site-session-registry.sh resolve --site github.com --session-key default
+scripts/site-session-registry.sh write --site github.com --session-key default --profile-dir ~/.agent-browser/profiles/https___github_com/default --source-origin 'https://github.com'
+```
+
+Operational notes:
+
+- default reuse should prefer `site + session-key`
+- non-default identities are allowed, but only when the user explicitly chooses a different `session-key`
+- corrupt registry JSON is treated as empty and rewritten on the next successful capture
+
+## Resolution Model
+
+Current preferred resolution order:
+
+1. explicit CLI `--profile-dir`
+2. site session registry
+3. exact manifest `profile_dir`
+4. compatibility fallback for legacy/scoped profile reuse
+5. fresh derived path only as the last fallback

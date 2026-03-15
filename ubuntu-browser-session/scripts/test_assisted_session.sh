@@ -4,6 +4,8 @@ set -euo pipefail
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+mkdir -p "$TMP_DIR/home"
+export HOME="$TMP_DIR/home"
 
 cat >"$TMP_DIR/runtime-stub.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -11,6 +13,9 @@ set -euo pipefail
 
 STATE_DIR="${RUNTIME_STUB_DIR:?}"
 TARGETS_JSON="${RUNTIME_STUB_TARGETS_JSON:-}"
+PAGE_URL="${RUNTIME_STUB_PAGE_URL:-https://example.com}"
+PAGE_TITLE="${RUNTIME_STUB_PAGE_TITLE:-Example}"
+PAGE_BODY="${RUNTIME_STUB_PAGE_BODY:-hello}"
 if [ -z "$TARGETS_JSON" ]; then
   TARGETS_JSON='[{"id":"page-1","type":"page","url":"https://example.com"}]'
 fi
@@ -124,7 +129,7 @@ PY
       elif [ "$check" = "login-wall" ]; then
         echo '{"hasLoginWall": true, "loginHits": ["Sign in"], "title": "Sign in", "url": "https://example.com/login"}'
       else
-        echo '{"title": "Verify you are human", "url": "https://example.com", "bodySnippet": "challenge"}'
+        printf '{"title": "Verify you are human", "url": "%s", "bodySnippet": "challenge"}\n' "$PAGE_URL"
       fi
     else
       if [ "$check" = "challenge" ]; then
@@ -132,7 +137,7 @@ PY
       elif [ "$check" = "login-wall" ]; then
         echo '{"hasLoginWall": false, "loginHits": [], "title": "Dashboard", "url": "https://example.com"}'
       else
-        echo '{"title": "Dashboard", "url": "https://example.com", "bodySnippet": "hello"}'
+        printf '{"title": "%s", "url": "%s", "bodySnippet": "%s"}\n' "$PAGE_TITLE" "$PAGE_URL" "$PAGE_BODY"
       fi
     fi
     ;;
@@ -147,14 +152,76 @@ esac
 EOF
 chmod +x "$TMP_DIR/runtime-stub.sh"
 
+cat >"$TMP_DIR/profile-resolution-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  write-identity)
+    provider=""
+    profile_dir=""
+    source_origin=""
+    source_session_key=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --provider)
+          provider="$2"
+          shift 2
+          ;;
+        --profile-dir)
+          profile_dir="$2"
+          shift 2
+          ;;
+        --source-origin)
+          source_origin="$2"
+          shift 2
+          ;;
+        --source-session-key)
+          source_session_key="$2"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    python3 - "${PROFILE_STUB_IDENTITY_FILE:?}" "$provider" "$profile_dir" "$source_origin" "$source_session_key" <<'PY'
+import json
+import os
+import sys
+
+path, provider, profile_dir, source_origin, source_session_key = sys.argv[1:]
+payload = {"providers": {}}
+if os.path.exists(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+providers = payload.setdefault("providers", {})
+providers[provider] = {
+    "profile_dir": profile_dir,
+    "source_origin": source_origin,
+    "source_session_key": source_session_key,
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+    ;;
+  *)
+    echo "unexpected profile command: $1" >&2
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$TMP_DIR/profile-resolution-stub.sh"
+
 RUNTIME_STUB_DIR="$TMP_DIR/runtime" AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
   "$BASE_DIR/assisted-session.sh" status --run-dir "$TMP_DIR" >/dev/null
 
-mkdir -p "$TMP_DIR/home"
 assist_status="$(
-  HOME="$TMP_DIR/home" \
   RUNTIME_STUB_DIR="$TMP_DIR/runtime" \
   AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
   "$BASE_DIR/assisted-session.sh" status \
     --url "https://foxcode.rjj.cc/api-keys" \
     --origin "https://foxcode.rjj.cc" \
@@ -163,6 +230,7 @@ assist_status="$(
 printf '%s\n' "$assist_status" | grep -q "run_dir: $TMP_DIR/home/.agent-browser/assist/https___foxcode_rjj_cc/foxcode-main"
 
 if RUNTIME_STUB_DIR="$TMP_DIR/runtime" AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
   "$BASE_DIR/assisted-session.sh" capture --run-dir "$TMP_DIR" --manifest-root "$TMP_DIR/manifests" --origin "https://example.com" >/dev/null 2>&1; then
   echo "expected capture without a verified browser to fail"
   exit 1
@@ -171,6 +239,7 @@ fi
 mkdir -p "$TMP_DIR/runtime"
 touch "$TMP_DIR/runtime/running" "$TMP_DIR/runtime/verified"
 RUNTIME_STUB_DIR="$TMP_DIR/runtime" AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
   "$BASE_DIR/assisted-session.sh" capture --run-dir "$TMP_DIR" --manifest-root "$TMP_DIR/manifests" --origin "https://example.com" --block-reason login-wall >/dev/null
 "$BASE_DIR/session-manifest.sh" show --root "$TMP_DIR/manifests" --origin "https://example.com" --session-key default | grep -q '"block_reason": "login-wall"'
 
@@ -180,8 +249,63 @@ RUNTIME_STUB_TARGETS_JSON='[
   {"id":"page-other","type":"page","url":"https://news.ycombinator.com"}
 ]' \
 RUNTIME_STUB_DIR="$TMP_DIR/runtime" AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
   "$BASE_DIR/assisted-session.sh" capture --run-dir "$TMP_DIR" --manifest-root "$TMP_DIR/fox-manifests" --origin "https://foxcode.rjj.cc" >/dev/null
 "$BASE_DIR/session-manifest.sh" show --root "$TMP_DIR/fox-manifests" --origin "https://foxcode.rjj.cc" --session-key default | grep -q '"target_id": "page-foxcode"'
+
+PROFILE_STUB_IDENTITY_FILE="$TMP_DIR/identity-profiles.json" \
+RUNTIME_STUB_TARGETS_JSON='[
+  {"id":"page-github","type":"page","url":"https://github.com/settings/profile"}
+]' \
+RUNTIME_STUB_PAGE_URL='https://github.com/settings/profile' \
+RUNTIME_STUB_PAGE_TITLE='GitHub Settings' \
+RUNTIME_STUB_PAGE_BODY='settings' \
+RUNTIME_STUB_DIR="$TMP_DIR/runtime" \
+AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
+AGENT_BROWSER_PROFILE_HELPER="$TMP_DIR/profile-resolution-stub.sh" \
+  "$BASE_DIR/assisted-session.sh" capture --run-dir "$TMP_DIR" --manifest-root "$TMP_DIR/github-manifests" --origin "https://github.com" >/dev/null
+grep -q '"github.com"' "$TMP_DIR/identity-profiles.json"
+grep -q '"profile_dir": "'"$TMP_DIR"'/runtime/profile"' "$TMP_DIR/identity-profiles.json"
+"$BASE_DIR/site-session-registry.sh" resolve --root "$TMP_DIR/home/.agent-browser" --site github.com --session-key default | grep -q '"profile_dir": "'"$TMP_DIR"'/runtime/profile"'
+
+cat >"$TMP_DIR/identity-profiles.json" <<EOF
+{
+  "providers": {
+    "github.com": {
+      "profile_dir": "/stale/profile",
+      "source_origin": "https://old.example",
+      "source_session_key": "old"
+    }
+  }
+}
+EOF
+PROFILE_STUB_IDENTITY_FILE="$TMP_DIR/identity-profiles.json" \
+RUNTIME_STUB_TARGETS_JSON='[
+  {"id":"page-github","type":"page","url":"https://github.com/settings/profile"}
+]' \
+RUNTIME_STUB_PAGE_URL='https://github.com/settings/profile' \
+RUNTIME_STUB_PAGE_TITLE='GitHub Settings' \
+RUNTIME_STUB_PAGE_BODY='settings' \
+RUNTIME_STUB_DIR="$TMP_DIR/runtime" \
+AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
+AGENT_BROWSER_PROFILE_HELPER="$TMP_DIR/profile-resolution-stub.sh" \
+  "$BASE_DIR/assisted-session.sh" capture --run-dir "$TMP_DIR" --manifest-root "$TMP_DIR/github-manifests" --origin "https://github.com" --session-key updated >/dev/null
+grep -q '"source_session_key": "updated"' "$TMP_DIR/identity-profiles.json"
+
+rm -f "$TMP_DIR/identity-profiles.json" "$TMP_DIR/runtime/verified"
+if PROFILE_STUB_IDENTITY_FILE="$TMP_DIR/identity-profiles.json" \
+  RUNTIME_STUB_DIR="$TMP_DIR/runtime" \
+  AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_PROFILE_HELPER="$TMP_DIR/profile-resolution-stub.sh" \
+  "$BASE_DIR/assisted-session.sh" capture --run-dir "$TMP_DIR" --manifest-root "$TMP_DIR/github-manifests" --origin "https://github.com" >/dev/null 2>&1; then
+  echo "expected capture with login wall to fail before writing identity metadata"
+  exit 1
+fi
+test ! -f "$TMP_DIR/identity-profiles.json"
+touch "$TMP_DIR/runtime/verified"
 
 mkdir -p "$TMP_DIR/override-run"
 cat >"$TMP_DIR/override-run/assist.env" <<EOF
@@ -193,8 +317,23 @@ VNC_PORT=5900
 PROFILE_DIR=$TMP_DIR/runtime/profile
 EOF
 RUNTIME_STUB_DIR="$TMP_DIR/runtime" AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
   "$BASE_DIR/assisted-session.sh" capture --run-dir "$TMP_DIR/override-run" --manifest-root "$TMP_DIR/override-manifests" --origin "https://override.example.com" --session-key override-check >/dev/null
 "$BASE_DIR/session-manifest.sh" show --root "$TMP_DIR/override-manifests" --origin "https://override.example.com" --session-key override-check | grep -q '"session_key": "override-check"'
+
+RUNTIME_STUB_TARGETS_JSON='[
+  {"id":"page-github","type":"page","url":"https://github.com/settings/profile"}
+]' \
+RUNTIME_STUB_PAGE_URL='https://github.com/settings/profile' \
+RUNTIME_STUB_PAGE_TITLE='GitHub Settings' \
+RUNTIME_STUB_PAGE_BODY='settings' \
+RUNTIME_STUB_DIR="$TMP_DIR/runtime" \
+AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
+  "$BASE_DIR/assisted-session.sh" capture --run-dir "$TMP_DIR/override-run" --manifest-root "$TMP_DIR/override-manifests" --origin "https://github.com" --session-key root-check >/dev/null
+test -f "$TMP_DIR/home/.agent-browser/index/identity-profiles.json"
+test ! -f "$TMP_DIR/override-manifests/index/identity-profiles.json"
+"$BASE_DIR/site-session-registry.sh" resolve --root "$TMP_DIR/home/.agent-browser" --site github.com --session-key root-check | grep -q '"session_key": "root-check"'
 
 mkdir -p "$TMP_DIR/bin" "$TMP_DIR/runtime" "$TMP_DIR/novnc"
 cat >"$TMP_DIR/bin/x11vnc" <<'EOF'
@@ -222,6 +361,7 @@ AGENT_BROWSER_NOVNC_WEB_ROOT="$TMP_DIR/novnc" \
 PATH="$TMP_DIR/bin:$PATH" \
 RUNTIME_STUB_DIR="$TMP_DIR/runtime" \
 AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
   "$BASE_DIR/assisted-session.sh" start --run-dir "$TMP_DIR/assist-run" --url "https://foxcode.rjj.cc/api-keys" >/dev/null
 
 grep -Eq '(^| )-rfbport (590[1-9]|59[1-9][0-9]|6[0-9]{3,})( |$)' "$TMP_DIR/x11vnc.args"

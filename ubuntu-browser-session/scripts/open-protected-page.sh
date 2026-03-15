@@ -41,6 +41,10 @@ assisted_helper() {
   "${AGENT_BROWSER_ASSISTED_HELPER:-$SCRIPT_DIR/assisted-session.sh}" "$@"
 }
 
+profile_helper() {
+  "${AGENT_BROWSER_PROFILE_HELPER:-$SCRIPT_DIR/profile-resolution.sh}" "$@"
+}
+
 manifest_field() {
   local field="$1"
   local payload="$2"
@@ -108,7 +112,8 @@ if assisted_status:
         key, value = raw.split(":", 1)
         if key.strip() == "novnc_url":
             payload["novncUrl"] = value.strip()
-            break
+        if key.strip() == "lan_novnc_url":
+            payload["lanNovncUrl"] = value.strip()
 print(json.dumps(payload, ensure_ascii=False))
 PY
 }
@@ -128,6 +133,20 @@ PY
 
 page_ready() {
   local payload="$1"
+  local page_url
+  page_url="$(page_field "$payload" url)"
+  page_loaded "$payload" || return 1
+  if [ -n "${INITIAL_URL:-}" ] && [ "$page_url" = "$INITIAL_URL" ]; then
+    return 0
+  fi
+  if [ -n "${ORIGIN:-}" ] && [[ "$page_url" == "$ORIGIN"* ]]; then
+    return 0
+  fi
+  return 1
+}
+
+page_loaded() {
+  local payload="$1"
   local page_url page_body
 
   page_url="$(page_field "$payload" url)"
@@ -135,6 +154,13 @@ page_ready() {
   [ -n "$page_body" ] || return 1
   [ "$page_url" != "about:blank" ] || return 1
   [ -n "$page_url" ] || return 1
+  return 0
+}
+
+page_mismatch() {
+  local payload="$1"
+  page_loaded "$payload" || return 1
+  page_ready "$payload" && return 1
   return 0
 }
 
@@ -160,6 +186,20 @@ select_existing_session() {
   return 1
 }
 
+resolve_profile() {
+  local resolved profile_dir
+  resolved="$(
+    profile_helper resolve \
+      --root "$HOME/.agent-browser" \
+      --manifest-root "$MANIFEST_ROOT" \
+      --origin "$ORIGIN" \
+      --session-key "$SESSION_KEY"
+  )" || return $?
+  profile_dir="$(manifest_field profile_dir "$resolved" || true)"
+  [ -n "$profile_dir" ] || die "profile resolver returned no profile_dir"
+  PROFILE_DIR="$profile_dir"
+}
+
 ensure_runtime() {
   local runtime_status_output
 
@@ -172,10 +212,25 @@ ensure_runtime() {
     return 0
   fi
 
+  resolve_profile || return $?
   runtime_helper start \
     --url "$INITIAL_URL" \
     --origin "$ORIGIN" \
     --session-key "$SESSION_KEY" \
+    --profile-dir "$PROFILE_DIR" \
+    --mode gui >/dev/null
+}
+
+recover_target_mismatch() {
+  if [ -z "${PROFILE_DIR:-}" ]; then
+    resolve_profile || return $?
+  fi
+  runtime_helper stop --origin "$ORIGIN" --session-key "$SESSION_KEY" >/dev/null 2>&1 || true
+  runtime_helper start \
+    --url "$INITIAL_URL" \
+    --origin "$ORIGIN" \
+    --session-key "$SESSION_KEY" \
+    --profile-dir "$PROFILE_DIR" \
     --mode gui >/dev/null
 }
 
@@ -183,6 +238,7 @@ COMMAND_URL=""
 ORIGIN=""
 MANIFEST_ROOT=""
 SESSION_KEY="default"
+PROFILE_DIR=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -218,7 +274,11 @@ ORIGIN="${ORIGIN:-$(derive_origin "$INITIAL_URL")}"
 MANIFEST_ROOT="${MANIFEST_ROOT:-$HOME/.agent-browser}"
 
 select_existing_session || true
-ensure_runtime
+if ! ensure_runtime; then
+  emit_result "needs-user" "open-novnc" "" "" "" "ambiguous-profile"
+  exit 0
+fi
+RECOVERY_ATTEMPTED=0
 for _attempt in 1 2 3 4 5; do
   TARGETS_JSON="$(runtime_helper list-targets --origin "$ORIGIN" --session-key "$SESSION_KEY")"
   TARGET_ID="$(
@@ -232,6 +292,13 @@ for _attempt in 1 2 3 4 5; do
   LOGIN_JSON="$(runtime_helper check-page --origin "$ORIGIN" --session-key "$SESSION_KEY" --target-id "$TARGET_ID" --check login-wall)"
   PAGE_JSON="$(runtime_helper check-page --origin "$ORIGIN" --session-key "$SESSION_KEY" --target-id "$TARGET_ID" --check page-info)"
 
+  if [ "$RECOVERY_ATTEMPTED" -eq 0 ] && page_mismatch "$PAGE_JSON"; then
+    if recover_target_mismatch; then
+      RECOVERY_ATTEMPTED=1
+      sleep 1
+      continue
+    fi
+  fi
   if printf '%s' "$CHALLENGE_JSON" | grep -q '"hasChallenge": *true'; then
     break
   fi
@@ -255,6 +322,13 @@ if printf '%s' "$LOGIN_JSON" | grep -q '"hasLoginWall": *true'; then
   assisted_helper start --url "$INITIAL_URL" --origin "$ORIGIN" --session-key "$SESSION_KEY" >/dev/null
   ASSISTED_STATUS="$(assisted_helper status --url "$INITIAL_URL" --origin "$ORIGIN" --session-key "$SESSION_KEY")"
   emit_result "needs-user" "open-novnc" "$TARGET_ID" "" "$ASSISTED_STATUS" "login-wall"
+  exit 0
+fi
+
+if ! page_ready "$PAGE_JSON"; then
+  assisted_helper start --url "$INITIAL_URL" --origin "$ORIGIN" --session-key "$SESSION_KEY" >/dev/null
+  ASSISTED_STATUS="$(assisted_helper status --url "$INITIAL_URL" --origin "$ORIGIN" --session-key "$SESSION_KEY")"
+  emit_result "needs-user" "open-novnc" "$TARGET_ID" "$PAGE_JSON" "$ASSISTED_STATUS" "target-mismatch"
   exit 0
 fi
 

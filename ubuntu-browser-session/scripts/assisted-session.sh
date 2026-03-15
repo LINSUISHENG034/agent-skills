@@ -57,6 +57,14 @@ manifest_helper() {
   "${AGENT_BROWSER_MANIFEST_HELPER:-$SCRIPT_DIR/session-manifest.sh}" "$@"
 }
 
+profile_helper() {
+  "${AGENT_BROWSER_PROFILE_HELPER:-$SCRIPT_DIR/profile-resolution.sh}" "$@"
+}
+
+site_registry_helper() {
+  "${AGENT_BROWSER_SITE_REGISTRY_HELPER:-$SCRIPT_DIR/site-session-registry.sh}" "$@"
+}
+
 pid_file() {
   printf '%s/%s.pid\n' "$RUN_DIR" "$1"
 }
@@ -157,6 +165,66 @@ for raw in sys.argv[2].splitlines():
 PY
 }
 
+identity_providers() {
+  local page_json="${1:-}"
+  local target_url="$ORIGIN"
+  if [ -n "$page_json" ]; then
+    target_url="$(
+      python3 - "$page_json" "$ORIGIN" <<'PY'
+import json
+import sys
+
+payload, origin = sys.argv[1:]
+try:
+    parsed = json.loads(payload) if payload else {}
+except json.JSONDecodeError:
+    parsed = {}
+print(parsed.get("url") or origin)
+PY
+    )"
+  fi
+  provider_aliases "$target_url"
+}
+
+write_identity_metadata() {
+  local page_json="$1"
+  local provider
+  while IFS= read -r provider; do
+    [ -n "$provider" ] || continue
+    profile_helper write-identity \
+      --root "$BASE_ROOT" \
+      --provider "$provider" \
+      --profile-dir "$PROFILE_DIR" \
+      --source-origin "$ORIGIN" \
+      --source-session-key "$SESSION_KEY" >/dev/null
+  done < <(identity_providers "$page_json")
+}
+
+write_site_session() {
+  local page_json="$1"
+  local final_url site
+  final_url="$(
+    python3 - "$page_json" "$ORIGIN" <<'PY'
+import json
+import sys
+
+payload, origin = sys.argv[1:]
+try:
+    parsed = json.loads(payload) if payload else {}
+except json.JSONDecodeError:
+    parsed = {}
+print(parsed.get("url") or origin)
+PY
+  )"
+  site="$(site_key "$final_url")"
+  site_registry_helper write \
+    --root "$BASE_ROOT" \
+    --site "$site" \
+    --session-key "$SESSION_KEY" \
+    --profile-dir "$PROFILE_DIR" \
+    --source-origin "$ORIGIN" >/dev/null
+}
+
 resolve_context() {
   BASE_ROOT="${HOME}/.agent-browser"
   MANIFEST_ROOT="${MANIFEST_ROOT:-$BASE_ROOT}"
@@ -206,11 +274,16 @@ resolve_context() {
 
 status_assisted() {
   local runtime
+  local lan_host
   runtime="$(runtime_status)"
   printf 'assisted_session: %s\n' "$(pid_running "$(read_pid x11vnc)" && printf 'running' || printf 'stopped')"
   printf 'run_dir: %s\n' "$RUN_DIR"
   printf 'runtime_run_dir: %s\n' "$RUNTIME_RUN_DIR"
   printf 'novnc_url: http://127.0.0.1:%s/vnc.html?autoconnect=1&resize=remote\n' "$NOVNC_PORT"
+  lan_host="$(primary_ipv4 || true)"
+  if [ -n "$lan_host" ]; then
+    printf 'lan_novnc_url: %s\n' "$(lan_novnc_url "$lan_host" "$NOVNC_PORT")"
+  fi
   printf '%s\n' "$runtime"
 }
 
@@ -358,6 +431,9 @@ capture_session() {
     --mode assisted-gui \
     --display "$display" \
     ${BLOCK_REASON:+--block-reason "$BLOCK_REASON"} >/dev/null
+
+  write_site_session "$page_json"
+  write_identity_metadata "$page_json"
 
   printf '%s\n' "$page_json"
 }

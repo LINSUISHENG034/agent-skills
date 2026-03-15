@@ -1,43 +1,83 @@
 # Use Cases
 
-## 1. First-Time Protected-Site Access
+## 1. First Login On The Ubuntu Host
 
-User intent: open a site from a headless Ubuntu Server host and inspect or interact with the page, even if the site presents Cloudflare, CAPTCHA, or login challenges.
-
-Representative requests:
-
-- "Open this site on the server and tell me what the page shows."
-- "Browse this dashboard from the Ubuntu host."
-- "Check whether this protected page loads from the agent host."
-
-Desired result: the skill either opens the page directly or asks for one bounded round of user help to establish a reusable browser session.
-
-Preferred path: call `scripts/open-protected-page.sh --url ...` first so the model does not have to hand-assemble the lower-level runtime steps.
-
-## 2. Reuse An Existing Verified Session
-
-User intent: continue using the same browser context that already passed verification earlier.
+User intent: establish a durable browser identity for an important site such as GitHub or Google on the Ubuntu Server host.
 
 Representative requests:
 
-- "Go back to the same site and read the latest content."
-- "Continue browsing that dashboard from yesterday's session."
-- "Reuse the same verified browser on the Ubuntu server."
+- "Log into GitHub on the Ubuntu host and keep it for future tasks."
+- "Set up the Google account in the server browser once."
 
-Desired result: the skill reattaches to the recorded browser context and avoids unnecessary new verification prompts.
+Desired result:
 
-Preferred path: reuse the same `--session-key`, let the wrapper rediscover the scoped runtime path, then fall back to low-level `verify` or `attach` only for diagnosis.
+- one bounded round of user help through noVNC
+- successful capture of the final page
+- future tasks reuse the same site identity by default
 
-## 3. Recover A Degraded Session
+Preferred path:
 
-User intent: the current browser state has drifted back to a challenge page, login wall, or dead browser process and needs the lightest possible recovery path.
+- `scripts/open-protected-page.sh --url ...`
+- user completes login in noVNC only if needed
+- `scripts/assisted-session.sh capture --origin ... --session-key default`
+
+## 2. Reuse The Default Site Identity
+
+User intent: agent should use the already logged-in browser context for a site without asking again.
 
 Representative requests:
 
-- "This page is back on Verify you are human. Recover it if possible."
-- "The old session stopped working. Re-establish access with the least user help."
-- "Try the existing session first, then tell me exactly what I need to do."
+- "Open GitHub settings on the server."
+- "Use the Google account session on the Ubuntu host."
+- "Continue from the same browser login as before."
 
-Desired result: local recovery happens first, user assistance only happens when the existing session is irrecoverable.
+Desired result:
 
-Preferred path: let the wrapper classify the page, pick the best matching tab, and open the assisted overlay only when challenge or login-wall checks remain active.
+- wrapper resolves the canonical site identity
+- browser opens the requested page in the same durable profile
+- no user prompt when the target page is still valid
+
+## 3. Recover A Drifted But Still Logged-In Browser
+
+User intent: browser is open in the right profile but currently sitting on the wrong page.
+
+Representative requests:
+
+- "Go back to GitHub settings."
+- "Switch back to my Google account page."
+- "The browser is open somewhere else. Continue the task."
+
+Desired result:
+
+- wrapper first navigates the existing logged-in profile back to the requested site
+- user is not interrupted just because the browser drifted to another page
+
+## 4. Recover An Expired Session
+
+User intent: site login really expired or the page returned to a challenge.
+
+Representative requests:
+
+- "This site is asking me to sign in again."
+- "Recover the old session with the least user help."
+- "Try the existing browser first, then tell me exactly what I need to do."
+
+Desired result:
+
+- local recovery paths happen first
+- user is asked to take over only when the target still lands on a login wall or challenge
+- successful capture updates the default site identity again
+
+## 5. Use A Non-Default Identity Explicitly
+
+User intent: user wants a secondary browser identity for a site, but only by explicit request.
+
+Representative requests:
+
+- "Use the `work` GitHub identity."
+- "Open Google with `session-key work`."
+
+Desired result:
+
+- agent uses the explicitly named `session-key`
+- agent never guesses between accounts automatically

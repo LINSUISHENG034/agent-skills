@@ -1,27 +1,37 @@
 # Validation Findings
 
-Current automated validation:
+Current fast validation:
 
-- `test_session_manifest.sh`: passes
-- `test_cdp_eval.sh`: passes
-- `test_browser_runtime.sh`: passes
-- `test_assisted_session.sh`: passes
 - `test_runtime_common.sh`: passes
+- `test_session_manifest.sh`: passes
+- `test_browser_runtime.sh`: passes
 - `test_open_protected_page.sh`: passes
+- `test_assisted_session.sh`: passes
+- `test_profile_resolution.sh`: passes
+- `test_identity_provider_reuse.sh`: passes
+- `test_site_session_registry.sh`: passes
 
-Manual wrapper validation on Ubuntu Server host:
+Important behavioral coverage now includes:
 
-- `scripts/open-protected-page.sh --url 'https://foxcode.rjj.cc/api-keys' --origin 'https://foxcode.rjj.cc' --session-key foxcode-main`
-- current observed result on 2026-03-13: wrapper correctly reports `needs-user` with a noVNC URL when the reused host-side session drifts back to a login wall
-- runtime isolation, target selection, and noVNC URL reporting were all exercised on the real host
+- canonical site-key resolution
+- corruption-safe site registry handling
+- site-first profile resolution
+- capture writing both manifest and site registry
+- loopback plus LAN noVNC URL reporting
+- wrong-page recovery before escalating to user takeover
 
-Real OpenClaw validation on 2026-03-13:
+Real-host validation on 2026-03-15:
 
-- the managed skill loads from `~/.openclaw/skills/ubuntu-browser-session/` for the renamed canonical identity
-- `openclaw agent --json` completes after Gateway fallback to embedded mode
-- OpenClaw still returned page quota values for `foxcode.rjj.cc`
+- GitHub default site identity captured successfully
+- Google default site identity captured successfully
+- `~/.agent-browser/index/site-sessions.json` rebuilt with:
+  - `github.com`
+  - `google.com`
+- OpenClaw `main` agent successfully reused both:
+  - `https://github.com/settings/profile`
+  - `https://myaccount.google.com/`
 
-Remaining risk:
+Operational note:
 
-- host-side wrapper and OpenClaw retest currently disagree about whether the saved `foxcode-main` session is still directly reusable
-- `cdp-eval.py --eval` can observe page text that is more accurate than the current `page-info` snapshot on some transitions, so delayed redirects remain the main area to watch in future real-site testing
+- direct LAN noVNC access may still require opening the corresponding host firewall port
+- when LAN access is blocked, the loopback noVNC URL is still valid through SSH port forwarding

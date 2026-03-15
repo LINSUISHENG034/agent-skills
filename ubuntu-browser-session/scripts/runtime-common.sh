@@ -47,6 +47,73 @@ runtime_scoped_path() {
   printf '%s/%s/%s/%s\n' "$base_root" "$category" "$slug" "$session_key"
 }
 
+site_key() {
+  python3 - "${1:-}" <<'PY'
+import sys
+from urllib.parse import urlparse
+
+raw = (sys.argv[1] or "").strip().lower()
+host = urlparse(raw).netloc.lower() if "://" in raw else raw
+
+google_hosts = {
+    "google.com",
+    "www.google.com",
+    "myaccount.google.com",
+    "accounts.google.com",
+}
+
+if host.endswith("github.com"):
+    print("github.com")
+elif host in google_hosts:
+    print("google.com")
+else:
+    print(host or "default")
+PY
+}
+
+provider_aliases() {
+  python3 - "${1:-}" <<'PY'
+import sys
+from urllib.parse import urlparse
+
+raw = (sys.argv[1] or "").strip().lower()
+host = urlparse(raw).netloc.lower() if "://" in raw else raw
+aliases = []
+if host:
+    aliases.append(host)
+if host.endswith("github.com"):
+    aliases.append("github.com")
+if host.endswith("google.com"):
+    aliases.extend(["accounts.google.com", "myaccount.google.com", "google.com"])
+seen = []
+for item in aliases:
+    if item and item not in seen:
+        seen.append(item)
+print("\n".join(seen))
+PY
+}
+
+lan_novnc_url() {
+  local host="$1"
+  local port="$2"
+  printf 'http://%s:%s/vnc.html?autoconnect=1&resize=remote\n' "$host" "$port"
+}
+
+primary_ipv4() {
+  local host="${AGENT_BROWSER_NOVNC_PUBLIC_HOST:-}"
+  if [ -n "$host" ]; then
+    printf '%s\n' "$host"
+    return 0
+  fi
+
+  if command -v ip >/dev/null 2>&1; then
+    ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}'
+    return 0
+  fi
+
+  return 1
+}
+
 pick_free_tcp_port() {
   python3 - "$1" <<'PY'
 import socket
