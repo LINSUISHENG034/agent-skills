@@ -202,6 +202,10 @@ cdp_eval() {
   "${AGENT_BROWSER_CDP_EVAL:-$SCRIPT_DIR/cdp-eval.py}" "$@"
 }
 
+profile_helper() {
+  "${AGENT_BROWSER_PROFILE_HELPER:-$SCRIPT_DIR/profile-resolution.sh}" "$@"
+}
+
 manifest_field() {
   local field="$1"
   local payload="$2"
@@ -258,7 +262,22 @@ resolve_context() {
     RUN_DIR="$(runtime_scoped_path "$BASE_ROOT" run "$ORIGIN" "$SESSION_KEY")"
   fi
   if [ -z "$PROFILE_DIR" ]; then
-    PROFILE_DIR="$(runtime_scoped_path "$BASE_ROOT" profiles "$ORIGIN" "$SESSION_KEY")"
+    local resolved_profile
+    if resolved_profile="$(
+      profile_helper resolve \
+        --root "$BASE_ROOT" \
+        --manifest-root "$MANIFEST_ROOT" \
+        --origin "$ORIGIN" \
+        --session-key "$SESSION_KEY"
+    )"; then
+      PROFILE_DIR="$(manifest_field profile_dir "$resolved_profile")"
+    else
+      local resolve_status=$?
+      if [ "$resolve_status" -eq 2 ]; then
+        die "ambiguous reusable profiles for $ORIGIN"
+      fi
+      exit "$resolve_status"
+    fi
   fi
   if [ -z "$LOG_DIR" ]; then
     LOG_DIR="$(runtime_scoped_path "$BASE_ROOT" logs "$ORIGIN" "$SESSION_KEY")"

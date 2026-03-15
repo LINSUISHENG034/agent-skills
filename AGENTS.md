@@ -50,6 +50,15 @@ Rules:
 - Use `docs/issues/` for local debugging notes, review findings, and temporary maintenance records.
 - Treat both directories as workspace support material, not repository artifacts.
 
+## OpenClaw Verification Notes
+
+- When validating a skill through OpenClaw, verify the managed copy under `~/.openclaw/workspace/skills/<skill-slug>/` or `~/.openclaw/skills/<skill-slug>/` before assuming the repository draft is what the agent will execute.
+- For main-agent reproduction, prefer `openclaw agent --agent main --json --message "..."` so the result is machine-readable and easier to compare across runs.
+- For browser-session skills, validate against concrete protected targets and record whether the result is `ready`, `needs-user`, `challenge`, or `login-wall` instead of summarizing loosely as "worked" or "failed".
+- After a verification run, inspect the corresponding OpenClaw session log under `~/.openclaw/agents/main/sessions/*.jsonl` to confirm which skill file was read, which script was invoked, and what raw tool result was returned.
+- If the OpenClaw-managed skill and the repository draft differ, document that gap explicitly in `docs/issues/` so later implementation work does not confuse draft behavior with shipped behavior.
+- Keep OpenClaw investigation notes, ad hoc verification outputs, and host-specific findings in `docs/issues/` as local-only support material; do not stage or publish them directly.
+
 ## Release Boundary
 
 Before push or publish:

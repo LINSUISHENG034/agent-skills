@@ -20,6 +20,13 @@ source "$BASE_DIR/runtime-common.sh"
 slug="$(origin_slug 'https://foxcode.rjj.cc')"
 [ "$slug" = "https___foxcode_rjj_cc" ]
 [ "$(derive_origin 'https://foxcode.rjj.cc/api-keys')" = "https://foxcode.rjj.cc" ]
+[ "$(site_key 'https://github.com/settings/profile')" = "github.com" ]
+[ "$(site_key 'https://myaccount.google.com/')" = "google.com" ]
+[ "$(site_key 'https://accounts.google.com/')" = "google.com" ]
+[ "$(provider_aliases 'https://myaccount.google.com/' | tr '\n' ' ')" = "myaccount.google.com accounts.google.com google.com " ]
+[ "$(provider_aliases 'https://github.com/settings/profile' | tr '\n' ' ')" = "github.com " ]
+[ "$(AGENT_BROWSER_NOVNC_PUBLIC_HOST='192.168.0.200' primary_ipv4)" = "192.168.0.200" ]
+[ "$(lan_novnc_url '192.168.0.200' '6084')" = "http://192.168.0.200:6084/vnc.html?autoconnect=1&resize=remote" ]
 
 vnc_port="$(pick_free_tcp_port 5900)"
 novnc_port="$(pick_free_tcp_port 6080)"

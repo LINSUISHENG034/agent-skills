@@ -1,37 +1,62 @@
 # Assisted Session Flow
 
-The assisted flow starts a GUI browser stack on Ubuntu Server, exposes it through noVNC, and captures a validated manifest after the user finishes the blocked step.
+The assisted flow is a bounded manual takeover on top of the same durable browser profile the agent will later reuse.
 
-The standalone runtime layer below it is `scripts/browser-runtime.sh`, which handles:
+It is not meant to be the primary day-to-day interaction model. It is the exception path for:
 
-- headless direct browsing
-- GUI browsing on Xvfb for challenge auto-pass attempts
-- CDP target discovery
-- best-match page target selection by exact URL, then origin, then host
-- manifest-based attach and verify operations
+- first login
+- expired sessions
+- challenges that cannot be cleared automatically
 
-`scripts/assisted-session.sh` layers `x11vnc` and `websockify` on top of a GUI runtime when the user must see and operate the same live browser instance.
+## Current Flow
 
-Current runtime behavior:
+1. Wrapper resolves the site profile and starts or reuses the GUI runtime
+2. Wrapper checks whether the current page is:
+   - the requested target page
+   - a wrong-page drift that can be auto-corrected
+   - a real login wall or challenge
+3. If local recovery is exhausted, `assisted-session.sh start` exposes the same live browser through noVNC
+4. User completes the blocked step and leaves the final target page loaded
+5. `assisted-session.sh capture` writes:
+   - the exact manifest
+   - the site session registry entry
+   - compatibility identity aliases for Google-family hosts
 
-- derive scoped `run_dir`, `profile_dir`, and `log_dir` from `origin + session-key`
-- auto-pick free CDP ports, X displays, VNC ports, and noVNC ports unless explicitly pinned
-- keep the assisted overlay attached to the same live browser instance instead of opening a fresh browser
+## Access URLs
 
-Expected control flow:
+`assisted-session.sh status` now reports both:
 
-1. Reuse or start the GUI browser runtime on `Xvfb`
-2. Classify the current page as challenge, login wall, or usable page
-3. Start `x11vnc` and `websockify` without replacing the live browser context
-4. Show the user a noVNC URL and a next-action message tailored to the blockage type
-5. Re-check the same live browser through CDP
-6. Capture a manifest only after challenge and login-wall checks are both clear
+- `novnc_url`: loopback URL for SSH tunnel use
+- `lan_novnc_url`: direct LAN URL when the host IP is known
 
-Typical commands:
+Examples:
+
+```text
+http://127.0.0.1:6084/vnc.html?autoconnect=1&resize=remote
+http://192.168.0.200:6084/vnc.html?autoconnect=1&resize=remote
+```
+
+Use the loopback URL if you are forwarding ports over SSH from Windows or another remote machine.
+
+Use the LAN URL only when firewall and network policy allow direct access.
+
+## Commands
 
 ```bash
 scripts/assisted-session.sh start --url 'https://target.example' --origin 'https://target.example' --session-key default
 scripts/assisted-session.sh status --origin 'https://target.example' --session-key default
-scripts/assisted-session.sh capture --origin 'https://target.example' --session-key default --block-reason login-wall
+scripts/assisted-session.sh capture --origin 'https://target.example' --session-key default
 scripts/assisted-session.sh stop --origin 'https://target.example' --session-key default
 ```
+
+## Important Rule
+
+The user should not be asked to intervene merely because the browser is on the wrong page.
+
+The wrapper should first try to return the same logged-in profile to the requested target page automatically.
+
+Manual takeover should happen only when the target still lands on:
+
+- a login wall
+- a challenge page
+- another unrecoverable blocked state

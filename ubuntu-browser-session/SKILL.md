@@ -1,36 +1,122 @@
 ---
 name: ubuntu-browser-session
-description: Use when a request needs a real Ubuntu Server browser session for protected-site browsing, session reuse, challenge recovery, or host-side page inspection with minimal repeated user assistance.
+description: Use when a request needs a real Ubuntu Server browser session with durable site login reuse, bounded manual login recovery, or host-side page inspection for protected sites.
 ---
 
 # Ubuntu Browser Session
 
-Standalone browser workflow for Ubuntu Server hosts that keeps session recovery centered on a durable `session manifest`, not just exported cookies.
+Use the Ubuntu host browser like a long-lived local browser for the agent.
+
+The primary model is site-centric:
+
+- each important site keeps one default primary identity
+- agent tasks reuse that default identity automatically
+- non-default identities are allowed only when the user explicitly names a different `session-key`
+- user help is only for first login, expired sessions, or unrecoverable challenges
 
 ## When To Use
 
-- Open, inspect, or interact with a site from a headless Ubuntu Server host
-- Reuse a previously verified browser session instead of creating a fresh browser instance
-- Recover a challenge-blocked or degraded protected-site session with the least user help
-- Distinguish Cloudflare or Turnstile challenge pages from login walls before escalating
+- Open, inspect, or interact with a protected site from the Ubuntu Server host
+- Reuse an already logged-in site session such as GitHub or Google
+- Recover an expired or challenge-blocked session with one bounded round of user help
+- Continue browser work on the host without re-authenticating every task
 
 Representative requests:
 
-- "Open this site on the server and tell me what the page shows."
-- "Continue browsing that dashboard from yesterday's session."
-- "This page is back on Verify you are human. Recover it if possible."
-- "Reuse the same browser session from the Ubuntu host."
+- "Use the Ubuntu host browser and open this dashboard."
+- "Reuse the existing GitHub login on the server."
+- "Continue from the same Google session."
+- "Recover this protected page with the least user help."
 
 ## Do Not Use
 
-- General web research that can be answered with HTTP fetches or web search
-- Local desktop GUI browsing outside the Ubuntu Server environment
-- Tasks where API keys, service tokens, or a non-browser auth flow are sufficient
-- Pure bootstrap-only login help when no follow-on browser workflow is needed
+- General web research that only needs HTTP fetch or web search
+- Local desktop browsing outside the Ubuntu Server host
+- Cases where an API token or non-browser auth flow is enough
 
-## Environment Requirements
+## Core Rules
 
-Check for the host-side dependencies first:
+- Default to one primary identity per site
+- Do not guess between multiple accounts automatically
+- Only use a non-default identity when the user explicitly names a different `session-key`
+- Prefer local recovery before asking the user to take over
+- Treat wrong-page drift as recoverable: first navigate back to the requested site in the same profile, then ask for help only if the target still lands on a login wall or challenge
+- Finish the host-browser workflow before switching tools: if `open-protected-page.sh` returns `ready`, keep working from this skill's host browser context and do not switch to OpenClaw's generic `browser` profile or other browser tools unless this workflow is exhausted or the task explicitly requires a different browser stack
+
+## Preferred Entry Point
+
+Use the wrapper first:
+
+```bash
+{baseDir}/scripts/open-protected-page.sh --url 'https://target.example' --session-key default
+```
+
+The wrapper is responsible for:
+
+- site-centric profile lookup
+- session reuse
+- target-page verification
+- one automatic recovery attempt when the browser drifted to the wrong page
+- bounded escalation to noVNC when user help is actually needed
+- keeping work inside the host browser workflow by default instead of mixing in unrelated browser profiles
+
+## Site Session Model
+
+Durable default identities are tracked by canonical site, not just exact origin.
+
+Examples:
+
+- `github.com` -> default GitHub browser identity
+- `google.com` -> default Google browser identity, including `myaccount.google.com`
+
+Persistent state is split across:
+
+- exact manifests for the live runtime and captured browser state
+- a site session registry for default per-site reuse
+- compatibility identity aliases for Google-family hosts
+
+Important files:
+
+- `~/.agent-browser/index/site-sessions.json`
+- `~/.agent-browser/sessions/...`
+- `~/.agent-browser/index/identity-profiles.json`
+
+## Manual Login Recovery
+
+When the wrapper cannot recover locally, it starts the assisted browser overlay and returns:
+
+- a loopback noVNC URL for SSH tunnel usage
+- a LAN noVNC URL when the host IP is known and noVNC is exposed on `0.0.0.0`
+
+Typical outputs:
+
+```text
+http://127.0.0.1:6084/vnc.html?autoconnect=1&resize=remote
+http://192.168.0.200:6084/vnc.html?autoconnect=1&resize=remote
+```
+
+Use the loopback URL if you are forwarding ports over SSH from Windows or another remote machine.
+
+Use the LAN URL only when the host firewall and network allow direct access.
+
+## Typical Workflow
+
+1. Try `open-protected-page.sh` with the requested URL and desired `session-key`
+2. Let the wrapper resolve the default site identity
+3. If the browser is already logged in but sitting on the wrong page, let the wrapper navigate back to the requested site automatically
+4. If the target page is ready, continue the task from this host browser workflow first
+5. If the target page still shows a login wall or challenge, open the returned noVNC URL
+6. After the user finishes the login and leaves the final page loaded, run:
+
+```bash
+{baseDir}/scripts/assisted-session.sh capture --origin 'https://target.example' --session-key default
+```
+
+That updates the manifest and the site session registry for later reuse.
+
+Only reach for unrelated browser tooling after this workflow fails to complete the task and you have a concrete reason the host browser workflow is insufficient.
+
+## Environment Checks
 
 ```bash
 command -v python3
@@ -42,152 +128,14 @@ command -v websockify
 command -v google-chrome || command -v chromium || command -v chromium-browser
 ```
 
-Runtime assumptions:
-
-- Ubuntu Server or equivalent Linux host
-- Python 3 standard library only for CDP WebSocket evaluation
-- Chrome or Chromium exposed through `--remote-debugging-port`
-- `Xvfb` available for GUI-mode challenge handling without a physical display
-
-## Workflow
-
-Always work in this order:
-
-1. Discover a matching manifest for the target origin
-2. Validate the manifest and the recorded browser process
-3. Attach to the existing browser session when it is still live
-4. Use headless direct browse for unknown or low-risk public pages
-5. Escalate to GUI-mode auto-browse when headless mode is blocked by a challenge
-6. Ask the user for help only after local recovery paths are exhausted
-
-Preferred autonomous entrypoint:
-
-```bash
-{baseDir}/scripts/open-protected-page.sh --url 'https://target.example' --session-key default
-```
-
-Use the lower-level scripts below when you need to inspect or repair an individual stage manually.
-
-### 1. Discover Existing Session State
-
-Use the manifest helper first, or let the wrapper do it for you:
-
-```bash
-{baseDir}/scripts/open-protected-page.sh --url 'https://target.example' --session-key default
-{baseDir}/scripts/session-manifest.sh list
-{baseDir}/scripts/session-manifest.sh select --origin 'https://target.example' --account-hint 'acct-a'
-```
-
-The selector must fail on ambiguous same-origin sessions instead of choosing arbitrarily.
-
-### 2. Validate Or Recover The Session
-
-Validate the current browser process and CDP target:
-
-```bash
-{baseDir}/scripts/browser-runtime.sh verify --origin 'https://target.example' --session-key default
-```
-
-If the browser process is gone but the profile directory is still usable, restart the runtime with the same profile:
-
-```bash
-{baseDir}/scripts/browser-runtime.sh start --url 'https://target.example' --mode gui --profile-dir ~/.agent-browser/profiles/target.example
-```
-
-### 3. Attach Existing Session
-
-When validation succeeds, keep using the recorded browser context:
-
-```bash
-{baseDir}/scripts/browser-runtime.sh attach --origin 'https://target.example' --session-key default
-{baseDir}/scripts/browser-runtime.sh list-targets --origin 'https://target.example' --session-key default
-```
-
-### 4. Direct Browse First
-
-For public or low-risk pages, try headless mode before escalating:
-
-```bash
-{baseDir}/scripts/browser-runtime.sh start --url 'https://target.example' --mode headless
-{baseDir}/scripts/browser-runtime.sh status
-```
-
-### 5. Detect The Blockage Type
-
-Use CDP page checks to decide whether the page is blocked by an anti-bot challenge or a login wall:
-
-```bash
-TARGETS_JSON="$({baseDir}/scripts/browser-runtime.sh list-targets --origin 'https://target.example' --session-key default)"
-TARGET_ID="$({baseDir}/scripts/browser-runtime.sh select-target --origin 'https://target.example' --targets-json "$TARGETS_JSON")"
-{baseDir}/scripts/browser-runtime.sh check-page --origin 'https://target.example' --session-key default --target-id "$TARGET_ID" --check challenge
-{baseDir}/scripts/browser-runtime.sh check-page --origin 'https://target.example' --session-key default --target-id "$TARGET_ID" --check login-wall
-{baseDir}/scripts/browser-runtime.sh check-page --origin 'https://target.example' --session-key default --target-id "$TARGET_ID" --check page-info
-```
-
-Challenge indicators:
-
-- Titles such as `请稍候`, `Just a moment`, `Checking your browser`, `Verify you are human`
-- HTML or body hits such as `cf-challenge`, `challenge-platform`, `turnstile`, `captcha`
-
-Login-wall indicators:
-
-- Body text such as `Sign in`, `Log in`, `登录`, `Create your account`, `Sign up`
-- URL patterns such as `/login`, `/signin`, `/auth`, `/i/flow/login`
-
-Real-site examples:
-
-- Cloudflare JS challenge path: `linux.do`
-- Login wall path: `x.com`
-
-### 6. Use GUI Auto-Browse Before Asking The User
-
-When headless mode is challenge-blocked but not login-walled, move to GUI mode on `Xvfb` and re-check the same page:
-
-```bash
-{baseDir}/scripts/browser-runtime.sh start --url 'https://target.example' --mode gui --profile-dir ~/.agent-browser/profiles/target.example
-{baseDir}/scripts/browser-runtime.sh status
-```
-
-If GUI mode still leaves the page blocked or the site needs credentials, start the assisted overlay:
-
-```bash
-{baseDir}/scripts/assisted-session.sh start --url 'https://target.example' --origin 'https://target.example' --session-key default
-{baseDir}/scripts/assisted-session.sh status --origin 'https://target.example' --session-key default
-```
-
-After the user finishes the blocked step and the host-side verification is clean, capture the manifest for later reuse:
-
-```bash
-{baseDir}/scripts/assisted-session.sh capture --origin 'https://target.example' --session-key default
-```
-
-If direct noVNC access is blocked or the user is on Windows, prefer SSH port forwarding before assuming the stack is unhealthy:
-
-```powershell
-ssh -L 6080:127.0.0.1:6080 -L 9222:127.0.0.1:9222 USER@HOST_IP
-```
-
-Then the user opens:
-
-```text
-http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=remote
-```
-
-## Failure And Recovery Rules
-
-- If multiple same-origin sessions exist, require `--account-hint` or `--task-scope`
-- If the manifest process is dead, mark the manifest stale and try profile restart before asking the user
-- If challenge checks still return blocked after GUI mode, ask the user to use the noVNC session
-- If login-wall checks remain true, ask the user to authenticate in the live browser and leave the final page loaded
-- If no reusable session exists, create a new assisted session only once per recovery attempt
-
 ## Key Files
 
-- `scripts/session-manifest.sh`: manifest CRUD, indexing, and safe selection
-- `scripts/open-protected-page.sh`: high-level protected-page orchestration for OpenClaw
-- `scripts/cdp-eval.py`: standard-library CDP WebSocket evaluation helper
-- `scripts/browser-runtime.sh`: headless and GUI runtime management
-- `scripts/assisted-session.sh`: noVNC-assisted flow layered on the same live browser session
+- `scripts/open-protected-page.sh`: main protected-site wrapper
+- `scripts/assisted-session.sh`: bounded manual takeover and capture
+- `scripts/site-session-registry.sh`: canonical per-site default session registry
+- `scripts/profile-resolution.sh`: site-first profile selection with compatibility fallback
+- `scripts/session-manifest.sh`: runtime manifest storage and verification support
+- `scripts/browser-runtime.sh`: browser runtime, target selection, and page checks
 
 See also:
 
@@ -196,3 +144,4 @@ See also:
 - `references/assisted-session-flow.md`
 - `references/testing-matrix.md`
 - `references/manual-fallback.md`
+- `references/validation-findings.md`
