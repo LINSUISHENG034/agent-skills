@@ -138,6 +138,74 @@ command -v google-chrome || command -v chromium || command -v chromium-browser
 - `scripts/profile-resolution.sh`: site-first profile selection with compatibility fallback
 - `scripts/session-manifest.sh`: runtime manifest storage and verification support
 - `scripts/browser-runtime.sh`: browser runtime, target selection, and page checks
+- `scripts/cdp-eval.py`: CDP evaluation, page checks, and navigation
+- `scripts/cdp-snapshot.py`: structured page content extraction via CDP
+
+## CDP Tools
+
+### cdp-eval.py
+
+Evaluate page state or run JavaScript over the Chrome DevTools Protocol.
+
+```bash
+# Check for challenge pages
+python3 {baseDir}/scripts/cdp-eval.py --port PORT --check challenge
+
+# Check for login walls
+python3 {baseDir}/scripts/cdp-eval.py --port PORT --check login-wall
+
+# Get page info (title, url, body snippet)
+python3 {baseDir}/scripts/cdp-eval.py --port PORT --check page-info
+
+# Run arbitrary JavaScript
+python3 {baseDir}/scripts/cdp-eval.py --port PORT --eval 'document.title'
+
+# Navigate to a URL and wait for load
+python3 {baseDir}/scripts/cdp-eval.py --port PORT --navigate 'https://example.com' --wait-navigation
+
+# Navigate, wait for load, then check page state
+python3 {baseDir}/scripts/cdp-eval.py --port PORT --navigate 'https://example.com' --wait-navigation --check page-info
+
+# Navigate and wait for a specific element to appear (10s timeout)
+python3 {baseDir}/scripts/cdp-eval.py --port PORT --navigate 'https://example.com' --wait-for '#main-content'
+```
+
+Parameters:
+
+- `--port PORT` (required): CDP HTTP/WebSocket port
+- `--target-id ID`: specific target from `/json/list`
+- `--check {challenge,login-wall,page-info}`: built-in page state checks
+- `--eval EXPRESSION`: arbitrary JavaScript for `Runtime.evaluate`
+- `--navigate URL`: navigate to URL via `Page.navigate`
+- `--wait-navigation`: wait for `Page.loadEventFired` after `--navigate`
+- `--wait-for SELECTOR`: poll for CSS selector to appear (timeout 10s)
+
+### cdp-snapshot.py
+
+Capture structured page content in one of three formats.
+
+```bash
+# Simplified markdown (default)
+python3 {baseDir}/scripts/cdp-snapshot.py --port PORT
+
+# Plain text extraction
+python3 {baseDir}/scripts/cdp-snapshot.py --port PORT --format text
+
+# Extract all links as title+href pairs
+python3 {baseDir}/scripts/cdp-snapshot.py --port PORT --format links
+
+# With character limit
+python3 {baseDir}/scripts/cdp-snapshot.py --port PORT --max-chars 4000
+```
+
+Output: JSON to stdout `{"title": "...", "url": "...", "content": "..."}`
+
+Parameters:
+
+- `--port PORT` (required): CDP HTTP/WebSocket port
+- `--target-id ID`: specific target from `/json/list`
+- `--format {markdown,text,links}`: output format (default: `markdown`)
+- `--max-chars N`: truncate content to N chars (default: 8000, 0=unlimited)
 
 See also:
 
