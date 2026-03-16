@@ -11,11 +11,14 @@ import os
 import socket
 import struct
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 TIMEOUT_SECONDS = 5
+NAVIGATE_TIMEOUT_SECONDS = 15
+WAIT_FOR_TIMEOUT_SECONDS = 10
 USER_AGENT = "ubuntu-browser-session/cdp-eval"
 
 
@@ -104,6 +107,94 @@ def read_frame(sock: socket.socket) -> str:
     if opcode != 0x1:
         raise CdpError(f"unsupported websocket opcode: {opcode}")
     return payload.decode("utf-8")
+
+
+class CdpSession:
+    """Persistent CDP websocket connection supporting multiple messages and events."""
+
+    def __init__(self, websocket_url: str, timeout: float = TIMEOUT_SECONDS):
+        parsed = urllib.parse.urlparse(websocket_url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+        if parsed.scheme != "ws":
+            raise CdpError("only ws:// CDP endpoints are supported")
+
+        key = websocket_key()
+        request_path = parsed.path or "/"
+        if parsed.query:
+            request_path += f"?{parsed.query}"
+
+        self._sock = socket.create_connection((host, port), timeout=timeout)
+        self._sock.settimeout(timeout)
+        handshake = (
+            f"GET {request_path} HTTP/1.1\r\n"
+            f"Host: {host}:{port}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n"
+        )
+        self._sock.sendall(handshake.encode("utf-8"))
+        response = b""
+        while b"\r\n\r\n" not in response:
+            chunk = self._sock.recv(4096)
+            if not chunk:
+                raise CdpError("incomplete websocket handshake")
+            response += chunk
+        header_blob = response.split(b"\r\n\r\n", 1)[0].decode("utf-8", errors="replace")
+        if "101" not in header_blob.splitlines()[0]:
+            raise CdpError(f"handshake failed: {header_blob.splitlines()[0]}")
+        expected_accept = base64.b64encode(
+            hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")).digest()
+        ).decode("ascii")
+        if f"Sec-WebSocket-Accept: {expected_accept}" not in header_blob:
+            raise CdpError("invalid websocket accept header")
+        self._next_id = 1
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self._sock.close()
+
+    def send(self, method: str, params: dict | None = None) -> int:
+        msg_id = self._next_id
+        self._next_id += 1
+        message = {"id": msg_id, "method": method}
+        if params:
+            message["params"] = params
+        self._sock.sendall(build_frame(json.dumps(message)))
+        return msg_id
+
+    def recv(self) -> dict:
+        return json.loads(read_frame(self._sock))
+
+    def call(self, method: str, params: dict | None = None) -> dict:
+        msg_id = self.send(method, params)
+        while True:
+            payload = self.recv()
+            if payload.get("id") == msg_id:
+                if "error" in payload:
+                    raise CdpError(str(payload["error"]))
+                return payload
+
+    def wait_for_event(self, event_method: str, timeout: float) -> dict:
+        deadline = time.monotonic() + timeout
+        old_timeout = self._sock.gettimeout()
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise CdpError(f"timeout waiting for {event_method}")
+                self._sock.settimeout(remaining)
+                payload = self.recv()
+                if payload.get("method") == event_method:
+                    return payload
+        finally:
+            self._sock.settimeout(old_timeout)
+
+    def set_timeout(self, timeout: float) -> None:
+        self._sock.settimeout(timeout)
 
 
 def websocket_request(websocket_url: str, message: dict[str, object]) -> dict[str, object]:
@@ -241,21 +332,82 @@ def gather_page_info(port: int, target_id: str | None) -> dict[str, object]:
     return value
 
 
+def navigate_and_wait(
+    port: int,
+    target_id: str | None,
+    url: str,
+    wait_selector: str | None = None,
+    wait_navigation: bool = False,
+) -> dict[str, object]:
+    """Navigate to *url* via CDP, optionally wait for load and/or a CSS selector."""
+    websocket_url = resolve_websocket_url(port, target_id)
+    with CdpSession(websocket_url, timeout=NAVIGATE_TIMEOUT_SECONDS) as session:
+        session.call("Page.enable")
+        session.call("Page.navigate", {"url": url})
+        if wait_navigation:
+            session.wait_for_event("Page.loadEventFired", timeout=NAVIGATE_TIMEOUT_SECONDS)
+        if wait_selector:
+            _wait_for_selector(session, wait_selector)
+        # Return current page info after navigation.
+        resp = session.call(
+            "Runtime.evaluate",
+            {
+                "expression": "({title: document.title, url: location.href})",
+                "returnByValue": True,
+            },
+        )
+        result = resp.get("result", {}).get("result", {})
+        return result.get("value", result)
+
+
+def _wait_for_selector(session: CdpSession, selector: str) -> None:
+    """Poll for a CSS selector to appear, up to WAIT_FOR_TIMEOUT_SECONDS."""
+    js = f"!!document.querySelector({json.dumps(selector)})"
+    deadline = time.monotonic() + WAIT_FOR_TIMEOUT_SECONDS
+    while True:
+        resp = session.call("Runtime.evaluate", {"expression": js, "returnByValue": True})
+        value = resp.get("result", {}).get("result", {}).get("value")
+        if value:
+            return
+        if time.monotonic() >= deadline:
+            raise CdpError(f"timeout waiting for selector: {selector}")
+        time.sleep(0.3)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="cdp-eval", description="Evaluate page state over the Chrome DevTools Protocol.")
     parser.add_argument("--port", type=int, required=True, help="CDP HTTP/WebSocket port")
     parser.add_argument("--target-id", help="Specific target id from /json/list")
     parser.add_argument("--check", choices=["challenge", "login-wall", "page-info"])
     parser.add_argument("--eval", dest="expression", help="Arbitrary JavaScript expression for Runtime.evaluate")
+    parser.add_argument("--navigate", metavar="URL", help="Navigate to URL before evaluating")
+    parser.add_argument("--wait-for", metavar="SELECTOR", help="Wait for CSS selector to appear (timeout 10s)")
+    parser.add_argument("--wait-navigation", action="store_true", help="Wait for page load event after --navigate")
     args = parser.parse_args()
-    if bool(args.check) == bool(args.expression):
-        parser.error("provide exactly one of --check or --eval")
+    if args.navigate:
+        pass  # --navigate can be used alone or combined with --check/--eval
+    elif bool(args.check) == bool(args.expression):
+        parser.error("provide exactly one of --check or --eval (or use --navigate)")
+    if args.wait_for and not args.navigate and not args.expression and not args.check:
+        parser.error("--wait-for requires --navigate, --check, or --eval")
+    if args.wait_navigation and not args.navigate:
+        parser.error("--wait-navigation requires --navigate")
     return args
 
 
 def main() -> int:
     args = parse_args()
     try:
+        if args.navigate:
+            nav_result = navigate_and_wait(
+                args.port, args.target_id, args.navigate,
+                wait_selector=args.wait_for,
+                wait_navigation=args.wait_navigation,
+            )
+            if not args.expression and not args.check:
+                print(json.dumps(nav_result, ensure_ascii=False))
+                return 0
+
         if args.expression:
             print(json.dumps(evaluate(args.port, args.target_id, args.expression), ensure_ascii=False))
             return 0
