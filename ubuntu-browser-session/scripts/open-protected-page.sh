@@ -86,15 +86,21 @@ emit_result() {
   local page_json="$4"
   local assisted_status="$5"
   local reason="$6"
+  local cdp_port="$7"
 
-  python3 - "$kind" "$action" "$target_id" "$page_json" "$assisted_status" "$reason" <<'PY'
+  python3 - "$kind" "$action" "$target_id" "$page_json" "$assisted_status" "$reason" "$cdp_port" <<'PY'
 import json
 import sys
 
-kind, action, target_id, page_json, assisted_status, reason = sys.argv[1:]
+kind, action, target_id, page_json, assisted_status, reason, cdp_port = sys.argv[1:]
 payload = {"status": kind, "action": action}
 if target_id:
     payload["targetId"] = target_id
+if cdp_port:
+    try:
+        payload["cdpPort"] = int(cdp_port)
+    except ValueError:
+        pass
 if reason:
     payload["reason"] = reason
 if page_json:
@@ -199,6 +205,12 @@ page_mismatch() {
   page_loaded "$payload" || return 1
   page_ready "$payload" && return 1
   return 0
+}
+
+resolve_cdp_port() {
+  local status_output
+  status_output="$(runtime_helper status --origin "$ORIGIN" --session-key "$SESSION_KEY" 2>/dev/null || true)"
+  status_value cdp_port "$status_output"
 }
 
 select_existing_session() {
@@ -312,9 +324,10 @@ MANIFEST_ROOT="${MANIFEST_ROOT:-$HOME/.agent-browser}"
 
 select_existing_session || true
 if ! ensure_runtime; then
-  emit_result "needs-user" "open-novnc" "" "" "" "ambiguous-profile"
+  emit_result "needs-user" "open-novnc" "" "" "" "ambiguous-profile" ""
   exit 0
 fi
+CDP_PORT="$(resolve_cdp_port)"
 RECOVERY_ATTEMPTED=0
 for _attempt in 1 2 3 4 5; do
   TARGETS_JSON="$(runtime_helper list-targets --origin "$ORIGIN" --session-key "$SESSION_KEY")"
@@ -351,22 +364,22 @@ done
 if printf '%s' "$CHALLENGE_JSON" | grep -q '"hasChallenge": *true'; then
   assisted_helper start --url "$INITIAL_URL" --origin "$ORIGIN" --session-key "$SESSION_KEY" >/dev/null
   ASSISTED_STATUS="$(assisted_helper status --url "$INITIAL_URL" --origin "$ORIGIN" --session-key "$SESSION_KEY")"
-  emit_result "needs-user" "open-novnc" "$TARGET_ID" "" "$ASSISTED_STATUS" "challenge"
+  emit_result "needs-user" "open-novnc" "$TARGET_ID" "" "$ASSISTED_STATUS" "challenge" "$CDP_PORT"
   exit 0
 fi
 
 if printf '%s' "$LOGIN_JSON" | grep -q '"hasLoginWall": *true'; then
   assisted_helper start --url "$INITIAL_URL" --origin "$ORIGIN" --session-key "$SESSION_KEY" >/dev/null
   ASSISTED_STATUS="$(assisted_helper status --url "$INITIAL_URL" --origin "$ORIGIN" --session-key "$SESSION_KEY")"
-  emit_result "needs-user" "open-novnc" "$TARGET_ID" "" "$ASSISTED_STATUS" "login-wall"
+  emit_result "needs-user" "open-novnc" "$TARGET_ID" "" "$ASSISTED_STATUS" "login-wall" "$CDP_PORT"
   exit 0
 fi
 
 if ! page_ready "$PAGE_JSON"; then
   assisted_helper start --url "$INITIAL_URL" --origin "$ORIGIN" --session-key "$SESSION_KEY" >/dev/null
   ASSISTED_STATUS="$(assisted_helper status --url "$INITIAL_URL" --origin "$ORIGIN" --session-key "$SESSION_KEY")"
-  emit_result "needs-user" "open-novnc" "$TARGET_ID" "$PAGE_JSON" "$ASSISTED_STATUS" "target-mismatch"
+  emit_result "needs-user" "open-novnc" "$TARGET_ID" "$PAGE_JSON" "$ASSISTED_STATUS" "target-mismatch" "$CDP_PORT"
   exit 0
 fi
 
-emit_result "ready" "report-page" "$TARGET_ID" "$PAGE_JSON" "" ""
+emit_result "ready" "report-page" "$TARGET_ID" "$PAGE_JSON" "" "" "$CDP_PORT"
