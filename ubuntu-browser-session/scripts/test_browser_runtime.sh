@@ -90,3 +90,48 @@ printf '%s\n' "$override_status" | grep -q 'url: https://override.example'
 printf '%s\n' "$override_status" | grep -q "profile_dir: $TMP_DIR/override-profile"
 printf '%s\n' "$override_status" | grep -q 'cdp_port: 24444'
 printf '%s\n' "$override_status" | grep -q 'mode: headless'
+
+mkdir -p "$TMP_DIR/bin" "$TMP_DIR/lock-profile-live" "$TMP_DIR/lock-profile-stale"
+cat >"$TMP_DIR/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+printf '{"Browser":"stub"}\n'
+EOF
+chmod +x "$TMP_DIR/bin/curl"
+
+cat >"$TMP_DIR/bin/browser-stub" <<'EOF'
+#!/usr/bin/env bash
+sleep 30
+EOF
+chmod +x "$TMP_DIR/bin/browser-stub"
+
+(
+  cd "$TMP_DIR/lock-profile-live"
+  ln -s "stub-$$" SingletonLock
+)
+PATH="$TMP_DIR/bin:$PATH" "$BASE_DIR/browser-runtime.sh" start \
+  --run-dir "$TMP_DIR/live-run" \
+  --profile-dir "$TMP_DIR/lock-profile-live" \
+  --url "https://example.com" \
+  --origin "https://example.com" \
+  --session-key "live" \
+  --mode headless \
+  --cdp-port 24555 \
+  --browser "$TMP_DIR/bin/browser-stub"
+test -L "$TMP_DIR/lock-profile-live/SingletonLock"
+"$BASE_DIR/browser-runtime.sh" stop --run-dir "$TMP_DIR/live-run"
+
+(
+  cd "$TMP_DIR/lock-profile-stale"
+  ln -s "stub-999999" SingletonLock
+)
+PATH="$TMP_DIR/bin:$PATH" "$BASE_DIR/browser-runtime.sh" start \
+  --run-dir "$TMP_DIR/stale-run" \
+  --profile-dir "$TMP_DIR/lock-profile-stale" \
+  --url "https://example.com" \
+  --origin "https://example.com" \
+  --session-key "stale" \
+  --mode headless \
+  --cdp-port 24556 \
+  --browser "$TMP_DIR/bin/browser-stub"
+test ! -e "$TMP_DIR/lock-profile-stale/SingletonLock"
+"$BASE_DIR/browser-runtime.sh" stop --run-dir "$TMP_DIR/stale-run"

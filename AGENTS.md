@@ -68,3 +68,14 @@ Before push or publish:
 - verify that `docs/plans/` and `docs/issues/` are absent from staged changes
 - verify that new root-level skills are complete and publishable
 - verify that local secrets, runtime state, and host-specific notes remain untracked
+
+## Version and Sync
+
+This repository is the single source of truth for skill content. ClawHub is the versioned distribution channel.
+
+- Track the current version in each published skill's SKILL.md frontmatter under `metadata.version`.
+- Bump `metadata.version` before running `clawhub sync` or `clawhub publish`.
+- The change flow is one-directional: repository → ClawHub registry → `~/.openclaw/skills/` managed copy.
+- Do not publish directly from `~/.openclaw/skills/`; always publish from the repository.
+- If OpenClaw runtime modifies scripts in the managed copy during use, port those changes back to the repository and bump the version before the next publish.
+- After publishing, run `clawhub update` to align the managed copy with the registry.

@@ -33,17 +33,25 @@ def http_get_json(url: str) -> object:
 
 
 def resolve_websocket_url(port: int, target_id: str | None) -> str:
+    targets = http_get_json(f"http://127.0.0.1:{port}/json/list")
+    if not isinstance(targets, list):
+        raise CdpError("invalid target list response")
+
+    page_targets = [target for target in targets if target.get("type") == "page"]
+
     if target_id:
-        targets = http_get_json(f"http://127.0.0.1:{port}/json/list")
-        if not isinstance(targets, list):
-            raise CdpError("invalid target list response")
-        for target in targets:
+        for target in page_targets:
             if target.get("id") == target_id:
                 websocket_url = target.get("webSocketDebuggerUrl")
                 if websocket_url:
                     return websocket_url
                 break
         raise CdpError("target-id not found")
+
+    if page_targets:
+        websocket_url = page_targets[0].get("webSocketDebuggerUrl")
+        if websocket_url:
+            return websocket_url
 
     version = http_get_json(f"http://127.0.0.1:{port}/json/version")
     websocket_url = version.get("webSocketDebuggerUrl") if isinstance(version, dict) else None
@@ -374,6 +382,61 @@ def _wait_for_selector(session: CdpSession, selector: str) -> None:
         time.sleep(0.3)
 
 
+def click_link(port: int, target_id: str | None, text: str) -> dict[str, object]:
+    expression = r"""((needle) => {
+      const normalize = (value) => (value || '').replace(/\s+/g, ' ').trim();
+      const isVisible = (anchor) => {
+        if (!anchor || !anchor.isConnected) return false;
+        if (anchor.hidden || anchor.getAttribute('aria-hidden') === 'true') return false;
+        const style = window.getComputedStyle(anchor);
+        if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
+        if (Number(style.opacity || '1') === 0) return false;
+        return anchor.getClientRects().length > 0;
+      };
+      const wanted = normalize(needle).toLowerCase();
+      const anchors = Array.from(document.querySelectorAll('a[href]'));
+      const ranked = anchors.map((anchor, index) => {
+        const anchorText = normalize(anchor.innerText || anchor.textContent);
+        return {
+          index,
+          anchor,
+          text: anchorText,
+          href: anchor.href || '',
+          visible: isVisible(anchor),
+          exact: anchorText.toLowerCase() === wanted,
+          includes: wanted && anchorText.toLowerCase().includes(wanted),
+        };
+      }).filter(item => item.text && item.href && item.visible);
+
+      ranked.sort((a, b) => {
+        const score = (item) => item.exact ? 0 : (item.includes ? 1 : 9);
+        return score(a) - score(b) || a.text.length - b.text.length || a.index - b.index;
+      });
+
+      const hit = ranked.find(item => item.exact || item.includes);
+      if (!hit) {
+        return {
+          clicked: false,
+          requestedText: needle,
+          candidates: ranked.slice(0, 10).map(item => ({ text: item.text, href: item.href }))
+        };
+      }
+
+      hit.anchor.scrollIntoView({block: 'center', inline: 'center'});
+      hit.anchor.click();
+      return {
+        clicked: true,
+        requestedText: needle,
+        text: hit.text,
+        href: hit.href
+      };
+    })(%s)""" % json.dumps(text)
+    value = evaluate(port, target_id, expression)
+    if not isinstance(value, dict):
+        raise CdpError("click-link did not return an object")
+    return value
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="cdp-eval", description="Evaluate page state over the Chrome DevTools Protocol.")
     parser.add_argument("--port", type=int, required=True, help="CDP HTTP/WebSocket port")
@@ -381,15 +444,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--check", choices=["challenge", "login-wall", "page-info"])
     parser.add_argument("--eval", dest="expression", help="Arbitrary JavaScript expression for Runtime.evaluate")
     parser.add_argument("--navigate", metavar="URL", help="Navigate to URL before evaluating")
+    parser.add_argument("--click-link-text", metavar="TEXT", help="Click the first anchor whose visible text matches or contains TEXT")
     parser.add_argument("--wait-for", metavar="SELECTOR", help="Wait for CSS selector to appear (timeout 10s)")
     parser.add_argument("--wait-navigation", action="store_true", help="Wait for page load event after --navigate")
     args = parser.parse_args()
+    action_count = sum(bool(x) for x in [args.check, args.expression, args.click_link_text])
     if args.navigate:
-        pass  # --navigate can be used alone or combined with --check/--eval
-    elif bool(args.check) == bool(args.expression):
-        parser.error("provide exactly one of --check or --eval (or use --navigate)")
-    if args.wait_for and not args.navigate and not args.expression and not args.check:
-        parser.error("--wait-for requires --navigate, --check, or --eval")
+        pass  # --navigate can be used alone or combined with one follow-up action
+    elif action_count != 1:
+        parser.error("provide exactly one of --check, --eval, or --click-link-text (or use --navigate)")
+    if args.wait_for and not args.navigate and not args.expression and not args.check and not args.click_link_text:
+        parser.error("--wait-for requires --navigate, --check, --eval, or --click-link-text")
     if args.wait_navigation and not args.navigate:
         parser.error("--wait-navigation requires --navigate")
     return args
@@ -410,6 +475,10 @@ def main() -> int:
 
         if args.expression:
             print(json.dumps(evaluate(args.port, args.target_id, args.expression), ensure_ascii=False))
+            return 0
+
+        if args.click_link_text:
+            print(json.dumps(click_link(args.port, args.target_id, args.click_link_text), ensure_ascii=False))
             return 0
 
         page_info = gather_page_info(args.port, args.target_id)

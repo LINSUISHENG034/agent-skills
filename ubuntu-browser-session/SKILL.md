@@ -1,6 +1,8 @@
 ---
 name: ubuntu-browser-session
 description: Use when a request needs a real Ubuntu Server browser session with durable site login reuse, bounded manual login recovery, or host-side page inspection for protected sites.
+metadata:
+  version: 1.0.3
 ---
 
 # Ubuntu Browser Session
@@ -143,6 +145,9 @@ command -v google-chrome || command -v chromium || command -v chromium-browser
 
 ## CDP Tools
 
+`cdp-eval.py` and `cdp-snapshot.py` stay generic by default.
+Forum/search-result helpers are optional enhancements; read `references/forum-enhancements.md` only when the current page is a forum topic list, category page, or search results page and you need structured topic/result links or text-based clicking.
+
 ### cdp-eval.py
 
 Evaluate page state or run JavaScript over the Chrome DevTools Protocol.
@@ -159,6 +164,9 @@ python3 {baseDir}/scripts/cdp-eval.py --port PORT --check page-info
 
 # Run arbitrary JavaScript
 python3 {baseDir}/scripts/cdp-eval.py --port PORT --eval 'document.title'
+
+# Click the first visible link whose text matches or contains the given phrase
+python3 {baseDir}/scripts/cdp-eval.py --port PORT --click-link-text 'Pricing'
 
 # Navigate to a URL and wait for load
 python3 {baseDir}/scripts/cdp-eval.py --port PORT --navigate 'https://example.com' --wait-navigation
@@ -177,12 +185,13 @@ Parameters:
 - `--check {challenge,login-wall,page-info}`: built-in page state checks
 - `--eval EXPRESSION`: arbitrary JavaScript for `Runtime.evaluate`
 - `--navigate URL`: navigate to URL via `Page.navigate`
+- `--click-link-text TEXT`: click the first visible matching anchor; when combined with `--navigate`, pair it with `--wait-navigation` or `--wait-for` so the destination DOM is ready before clicking
 - `--wait-navigation`: wait for `Page.loadEventFired` after `--navigate`
 - `--wait-for SELECTOR`: poll for CSS selector to appear (timeout 10s)
 
 ### cdp-snapshot.py
 
-Capture structured page content in one of three formats.
+Capture structured page content in generic formats by default, plus an optional forum/search-result helper format.
 
 ```bash
 # Simplified markdown (default)
@@ -194,6 +203,9 @@ python3 {baseDir}/scripts/cdp-snapshot.py --port PORT --format text
 # Extract all links as title+href pairs
 python3 {baseDir}/scripts/cdp-snapshot.py --port PORT --format links
 
+# Extract topic/result links from the main content area (useful on forums/search pages)
+python3 {baseDir}/scripts/cdp-snapshot.py --port PORT --format topic-links
+
 # With character limit
 python3 {baseDir}/scripts/cdp-snapshot.py --port PORT --max-chars 4000
 ```
@@ -204,11 +216,14 @@ Parameters:
 
 - `--port PORT` (required): CDP HTTP/WebSocket port
 - `--target-id ID`: specific target from `/json/list`
-- `--format {markdown,text,links}`: output format (default: `markdown`)
+- `--format {markdown,text,links,topic-links}`: output format (default: `markdown`)
 - `--max-chars N`: truncate content to N chars (default: 8000, 0=unlimited)
+
+For `topic-links`, `meta` is best-effort surrounding text truncated to 400 characters.
 
 See also:
 
+- `references/forum-enhancements.md`
 - `references/use-cases.md`
 - `references/session-manifest.md`
 - `references/assisted-session-flow.md`

@@ -75,6 +75,24 @@ pid_running() {
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
+cleanup_profile_locks() {
+  local profile_dir="$1"
+  [ -n "$profile_dir" ] || return 0
+  local lock="$profile_dir/SingletonLock"
+  if [ -L "$lock" ]; then
+    local target pid
+    target="$(readlink "$lock" 2>/dev/null || true)"
+    pid="${target##*-}"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  rm -f \
+    "$lock" \
+    "$profile_dir/SingletonSocket" \
+    "$profile_dir/SingletonCookie"
+}
+
 pid_file() {
   printf '%s/%s.pid\n' "$RUN_DIR" "$1"
 }
@@ -337,6 +355,8 @@ start_runtime() {
   if runtime_running; then
     die "browser runtime already running; use stop or status first"
   fi
+
+  cleanup_profile_locks "$PROFILE_DIR"
 
   write_state
 
