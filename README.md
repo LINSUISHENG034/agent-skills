@@ -22,6 +22,8 @@ Maintainer-facing reference material lives under `docs/`.
   - Host-side diagnostics for OpenClaw deployments using live command-backed evidence and layered troubleshooting.
 - `qwen3-asr-transcribe`
   - Local transcription workflow using a bundled Qwen3 ASR runtime.
+- `markdown-mobile-export`
+  - Faithful local Markdown to mobile long-image export with HTML sidecar output and browser-backed full-page capture.
 
 ## Draft Skills
 
