@@ -27,6 +27,18 @@ dist/
 /drafts/*
 !/drafts/.gitkeep
 
+# Local third-party skill sources and copied references
+/third_party/*
+!/third_party/README.md
+!/third_party/repos/
+!/third_party/repos/.gitkeep
+!/third_party/imports/
+!/third_party/imports/.gitkeep
+/third_party/repos/*
+!/third_party/repos/.gitkeep
+/third_party/imports/*
+!/third_party/imports/.gitkeep
+
 # Ignore everything under docs by default
 /docs/*
 

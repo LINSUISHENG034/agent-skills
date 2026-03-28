@@ -13,6 +13,7 @@ Each skill lives in its own directory and typically contains:
 
 Published skills live at the repository root. Unfinished skills stay under `drafts/` and are ignored by git until they are ready to be promoted.
 Maintainer-facing reference material lives under `docs/`.
+Local-only third-party skill sources live under `third_party/`.
 
 ## Current Skills
 
@@ -41,6 +42,27 @@ Use `docs/` for maintainer references, authoring notes, and example material tha
   - External guides, archived references, and canonical background material
 - `docs/plans/`
   - Local working plans for repository maintenance; ignored from version control
+
+## Third-Party References
+
+Use `third_party/` for local-only third-party skill material that you want to inspect over time without vendoring it into this repository.
+
+- `third_party/repos/`
+  - Full upstream repositories cloned locally for update tracking
+- `third_party/imports/`
+  - Single copied skills or partial references kept only as local authoring input
+
+Keep all contents under `third_party/` ignored by git by default. Use the repository name directly under `third_party/repos/`, for example `third_party/repos/baoyu-skills/`. For copied or partial references under `third_party/imports/`, preserve author or organization names when known, for example `third_party/imports/JimLiu/some-single-skill/` or `third_party/imports/unknown/copied-skill/`.
+
+Maintenance commands:
+
+```bash
+# Fetch remote updates for every tracked third-party repo without changing local checkouts
+bash scripts/update-third-party-repos.sh
+
+# Fast-forward local third-party checkouts only when you explicitly want to sync them
+bash scripts/update-third-party-repos.sh --pull
+```
 
 ## Publishing Rules
 
@@ -91,6 +113,7 @@ This repository intentionally ignores local secrets and runtime artifacts, inclu
 - `.venv`
 - Python cache files
 - local copies of third-party reference documents
+- local third-party skill repositories and copied skill references
 
 If a skill needs local credentials or runtime state, keep them beside the skill but outside version control.
 
