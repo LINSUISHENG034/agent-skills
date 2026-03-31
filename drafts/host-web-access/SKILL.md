@@ -11,7 +11,7 @@ Use this draft when the agent needs public research plus the ability to escalate
 
 ## Overview
 
-`open-host-page.sh` is the canonical entry point. It:
+`open-host-page.sh` is the canonical normal entrypoint. It:
 
 - routes the request via `route-web-task.sh` so lightweight search/fetch take the default path for public content
 - honors `--task-mode` and `--expected-action` to document caller intent and assert the normalized route before browser orchestration starts
@@ -20,6 +20,8 @@ Use this draft when the agent needs public research plus the ability to escalate
 - uses local `host-page-ops.py` and `host-page-snapshot.py` helpers instead of importing `ubuntu-browser-session`
 - always runs `cleanup-host-runtime.sh` so browser, Xvfb, x11vnc, and websockify PIDs are released after every task
 - emits machine-readable JSON: all paths include `route`, `reason`, `needs_browser`, and `origin`; browser paths add `run_dir`, `profile_dir`, and `runtime_status`; assisted recovery additionally includes `assisted_session` and `lan_novnc_url`
+
+Assisted flow is the exception path. The normal path is to complete work through `open-host-page.sh` without operator takeover.
 
 ## Routing Philosophy
 
@@ -35,7 +37,13 @@ Start with `WebSearch`, `WebFetch`, `curl`, or `Jina` for public requests. Escal
 
 ## Assisted LAN Flow
 
-The assisted path exposes a single fixed LAN `lan_novnc_url` on port `6084` by default. Normal recovery never emits loopback or SSH-forwarded URLs. The `capture` command writes both the session manifest and site-session registry entry so future tasks reuse the same host profile.
+The assisted path exposes a single fixed LAN `lan_novnc_url` on port `6084` by default. The `capture` command writes both the session manifest and site-session registry entry so future tasks reuse the same host profile.
+
+## Identity And Protected Route Rules
+
+Protected-site browser work stays in the host-browser workflow by default. The normal workflow does not hand protected tasks to a fetch-only path once browser routing is required.
+
+Identity governance defaults to one primary identity per canonical site. Secondary identities are opt-in and must be selected explicitly with `--session-key`; the skill does not auto-select between multiple identities.
 
 ## Cleanup Guarantees
 

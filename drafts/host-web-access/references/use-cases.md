@@ -3,6 +3,10 @@
 - Public web lookup without browser startup
 - Protected site reuse with host-side persistent profile
 - Explicit non-default `session-key` profile selection
+- Successor identity governance: keep one primary identity per canonical site and require explicit `session-key` for secondary identities
+- Confirm wrong-page recovery before user takeover so protected-site tasks return to the expected account context first
+- Keep protected-site browser-route continuity on protected tasks instead of switching to fetch-only flows mid-task
+- Validate LAN-only assisted handoff by checking `lan_novnc_url` output on recovery sessions
 - Validate the routing contract: `task-mode` expresses caller intent, `route` normalizes that intent to `search`, `fetch`, or `browser`, and `reason` preserves the specific classification that justified the route
 - Verify `--expected-action` as a route assertion only: mismatches fail before browser orchestration starts, while successful `browser` routing can still surface runtime or assisted-recovery status separately
 - Validate the integrated `open-host-page.sh` path: the router stays on lightweight search when `route: "search"`, launches the browser runtime only when the router reports `browser`, triggers the assisted LAN flow only when recovery fails, and always runs cleanup
