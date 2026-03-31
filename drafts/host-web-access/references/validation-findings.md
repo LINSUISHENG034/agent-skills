@@ -1,38 +1,51 @@
 # Validation Findings
 
-- Accepted as valid and remediated:
-  - `open-host-page.sh` now emits structured JSON on lightweight and browser paths, with assisted-only `lan_novnc_url` output
-  - Route semantics are documented explicitly: `task-mode` is caller intent, `route` is normalized to `search` / `fetch` / `browser`, and `reason` preserves the specific classification
-  - `--expected-action` failures now describe a route assertion failure before browser orchestration starts
-  - `assist-lan-session.sh` now tells operators to set `AGENT_BROWSER_NOVNC_PUBLIC_HOST` explicitly for LAN exposure when host defaults are ambiguous
-  - `host-page-ops.py` now exposes generic retry/readiness flags plus shell-safe invocation guidance in `--help`
-  - Draft docs now include direct, copyable examples for `host-page-ops.py` and `host-page-snapshot.py`
-- Accepted in narrower form:
-  - The semantics concern around `--expected-action` was fixed as documentation plus failure-message clarity; no `--expected-step` expansion was added
-  - `lan_novnc_url` remains assisted-only and is not emitted on normal browser startup success
-  - Dynamic-page handling was improved with a small generic `--retry N --retry-delay-ms MS` surface for `--eval` and `--check`, without adding site-specific selectors or orchestration
-- Rejected or deferred:
-  - `session-key` default coupling was not treated as an isolation bug because origin-scoped runtime and profile paths already prevent collisions
-  - `--wait-navigation` shell parsing misuse remains a caller-side command construction problem; the remediation is documentation and `--help` guidance, not a CLI rename
-  - Site-specific behavior such as `linux.do` throttling or Discourse extraction helpers remains outside this generic skill
-  - Automatic `web_fetch` to browser fallback and lightweight/no-profile runtime modes remain out of scope for this remediation
-- Local verification commands executed successfully in the remediation worktree:
+- Successor iteration status:
+  - `open-host-page.sh` now keeps the top-level `route` / `reason` / `needs_browser` contract while adding browser-path state such as `runtime_status`, `page_status`, `target_id`, and `recovery_attempted`
+  - Browser-route success is now based on target-page correctness rather than runtime startup alone
+  - Wrong-page drift gets one local in-session recovery attempt before assisted escalation
+  - Assisted handoff is LAN-only and remains alive after `open-host-page.sh` returns blocked-state handoff payload
+  - Assisted `capture` now rejects challenge/login-wall/off-target final pages before writing reusable state
+  - Successful assisted `capture` writes:
+    - manifest state at `--manifest-root`
+    - site-session registry under the main skill root
+    - identity metadata under the main skill root
+  - `host-page-snapshot.py --format topic-links` now uses generic result-page heuristics with behavior-level browser-backed regression tests
+- Local verification commands executed successfully in the successor worktree on 2026-04-01:
   - `bash drafts/host-web-access/scripts/test_runtime_common.sh`
   - `bash drafts/host-web-access/scripts/test_session_manifest.sh`
   - `bash drafts/host-web-access/scripts/test_site_session_registry.sh`
   - `bash drafts/host-web-access/scripts/test_profile_resolution.sh`
   - `bash drafts/host-web-access/scripts/test_browser_runtime.sh`
   - `bash drafts/host-web-access/scripts/test_assist_lan_session.sh`
+  - `bash drafts/host-web-access/scripts/test_identity_provider_reuse.sh`
   - `bash drafts/host-web-access/scripts/test_host_page_ops.sh`
   - `bash drafts/host-web-access/scripts/test_host_page_snapshot.sh`
   - `bash drafts/host-web-access/scripts/test_route_web_task.sh`
   - `bash drafts/host-web-access/scripts/test_open_host_page.sh`
+  - `bash drafts/host-web-access/scripts/test_skill_scope.sh`
   - `python3 -m py_compile drafts/host-web-access/scripts/host-cdp-core.py`
   - `python3 -m py_compile drafts/host-web-access/scripts/host-page-ops.py`
   - `python3 -m py_compile drafts/host-web-access/scripts/host-page-snapshot.py`
 - Coverage highlights:
-  - Assisted recovery verification confirms the fixed LAN port `6084`, `lan_novnc_url`-only status output, explicit LAN host configuration guidance, manifest capture, and cleanup
-  - Integrated entrypoint verification confirms lightweight vs browser routing, structured JSON output, route assertion failures before runtime startup, profile resolution before browser start, assisted capture on non-running status, and unconditional cleanup
-  - Helper verification confirms local-only CDP ownership, retry/help surface exposure, and snapshot helper CLI coverage
+  - Scope/contract verification covers successor public rules, LAN-only wording, and protected-route discipline
+  - Runtime verification covers `select-target`, `check-page`, `verify`, stale-lock cleanup, and auto-picked CDP/display values
+  - Integrated entrypoint verification covers runtime reuse, target selection, `ready` / `challenge` / `login-wall` / `target-mismatch`, one wrong-page recovery attempt, and assisted handoff persistence
+  - Assisted capture verification covers challenge/login-wall/off-origin/wrong-target rejection plus identity metadata reuse
+  - Result-page extraction verification now uses browser-backed fixtures instead of source-only smoke checks
+- Real-host / OpenClaw gate on 2026-04-01:
+  - Managed copy check: `~/.openclaw/skills/host-web-access/` differs from the current worktree for at least `SKILL.md`, `scripts/open-host-page.sh`, `scripts/assist-lan-session.sh`, and `scripts/browser-runtime.sh`
+  - OpenClaw command run 1:
+    - `openclaw agent --agent main --json --message "Use host-web-access to open https://github.com/settings/profile with the default host session."`
+    - Result: the main agent reported it could not find a usable `host-web-access` skill/tool and suggested `ubuntu-browser-session` instead
+  - OpenClaw command run 2:
+    - `openclaw agent --agent main --json --message "Use host-web-access to open https://myaccount.google.com/ with the default host session."`
+    - Result: the main agent did locate `~/.openclaw/skills/host-web-access/`, but it exercised the stale managed copy, manually restarted the browser runtime, then reported a GitHub login page rather than a stable validated successor-path outcome
+- Current gate decision:
+  - Local successor worktree verification: PASS
+  - Real-host / managed-copy successor verification: NOT YET VALID
+  - Promotion to repository root: BLOCKED
+  - README / `ubuntu-browser-session` successor handoff changes: BLOCKED
 - Remaining gap:
-  - Real-host validation is still pending. This remediation has not yet been exercised against a live Ubuntu host browser session and an actual LAN client in this worktree.
+  - The OpenClaw-managed `host-web-access` copy is out of sync with the current worktree, so real-host runs do not validate the code on this branch
+  - A local investigation note should record the managed-copy mismatch and raw OpenClaw observations before any promotion decision
