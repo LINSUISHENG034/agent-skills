@@ -13,3 +13,10 @@ This document codifies the successor-facing policy contract. The current runtime
 Policy target: the default session for a protected site is the declared primary identity in registry or manifest data. When more than one identity exists for the same canonical site, callers must provide `--session-key` for any non-default identity.
 
 If identity state and live browser page drift, recover to the expected account page before any user takeover. The assisted path remains LAN-scoped through `lan_novnc_url`.
+
+Assisted capture writes reusable metadata only after runtime verification confirms:
+- no active challenge
+- no login wall
+- final page URL still matches the requested origin/target
+
+On successful assisted capture, manifest state is written at `--manifest-root`, while reusable identity/session metadata is written under the main skill root (`$HOME/.agent-browser/index/`), not under the override manifest root.
