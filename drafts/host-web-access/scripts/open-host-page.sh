@@ -126,6 +126,7 @@ BROWSER_RUNTIME_HELPER="${HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER:-$SCRIPT_DIR/br
 ASSIST_HELPER="${HOST_WEB_ACCESS_ASSIST_HELPER:-$SCRIPT_DIR/assist-lan-session.sh}"
 CLEANUP_HELPER="${HOST_WEB_ACCESS_CLEANUP_HELPER:-$SCRIPT_DIR/cleanup-host-runtime.sh}"
 PROFILE_HELPER="${HOST_WEB_ACCESS_PROFILE_HELPER:-$SCRIPT_DIR/profile-resolution.sh}"
+PAGE_OPS_HELPER="${HOST_WEB_ACCESS_PAGE_OPS_HELPER:-$SCRIPT_DIR/host-page-ops.py}"
 
 task_mode="latest"
 expected_action=""
@@ -238,6 +239,7 @@ fi
 
 status_output="$("$BROWSER_RUNTIME_HELPER" status --run-dir "$run_dir" --origin "$origin" --session-key "$session_key")"
 runtime_status="$(status_field status "$status_output")"
+cdp_port="$(status_field cdp_port "$status_output")"
 page_status=""
 target_id=""
 recovery_attempted="false"
@@ -283,11 +285,20 @@ fi
 
 if [ "$needs_recovery" = "true" ]; then
   recovery_attempted="true"
-  start_runtime >/dev/null 2>&1 || true
+  if [ "$runtime_status" = "running" ] && [ -n "$target_id" ] && [ -n "$cdp_port" ]; then
+    "$PAGE_OPS_HELPER" \
+      --port "$cdp_port" \
+      --target-id "$target_id" \
+      --navigate "$url" \
+      --wait-navigation >/dev/null 2>&1 || true
+  else
+    start_runtime >/dev/null 2>&1 || true
+  fi
   status_output="$("$BROWSER_RUNTIME_HELPER" status --run-dir "$run_dir" --origin "$origin" --session-key "$session_key")"
   runtime_status="$(status_field status "$status_output")"
+  cdp_port="$(status_field cdp_port "$status_output")"
   target_id="$(select_target || true)"
-  if [ -n "$target_id" ]; then
+  if [ "$runtime_status" = "running" ] && [ -n "$target_id" ]; then
     evaluate_page_state "$target_id" || true
   else
     page_status="target-mismatch"
@@ -317,25 +328,6 @@ case "$page_status" in
   *)
     ;;
 esac
-
-if [ "$runtime_reused" = "false" ] && [ "$runtime_status" != "running" ] && [ -z "$page_status" ]; then
-  page_status="target-mismatch"
-  assist_output="$("$ASSIST_HELPER" start \
-    --run-dir "$run_dir" \
-    --origin "$origin" \
-    --session-key "$session_key" \
-    --profile-dir "$profile_dir" \
-    --manifest-root "$manifest_root")"
-  lan_novnc_url="$(status_field lan_novnc_url "$assist_output")"
-  assisted_session="true"
-  "$ASSIST_HELPER" capture \
-    --run-dir "$run_dir" \
-    --origin "$origin" \
-    --session-key "$session_key" \
-    --profile-dir "$profile_dir" \
-    --manifest-root "$manifest_root" >/dev/null
-  "$ASSIST_HELPER" stop --run-dir "$run_dir" >/dev/null
-fi
 
 emit_result \
   "$route" \

@@ -66,6 +66,10 @@ next_sequence_value() {
 case "${1:-}" in
   ensure-browser) exit 0 ;;
   start)
+    if [ "${RUNTIME_STATUS_RESPONSE:-running}" = "running" ]; then
+      echo "browser runtime already running" >&2
+      exit 1
+    fi
     if [ -n "$STATE_DIR" ]; then
       local_count_file="$STATE_DIR/start.count"
       local_count=0
@@ -78,6 +82,7 @@ case "${1:-}" in
     ;;
   status)
     printf 'status: %s\n' "${RUNTIME_STATUS_RESPONSE:-running}"
+    printf 'cdp_port: %s\n' "${RUNTIME_CDP_PORT_RESPONSE:-9222}"
     ;;
   verify)
     if [ "${VERIFY_BEHAVIOR:-success}" = "fail" ]; then
@@ -120,7 +125,8 @@ case "${1:-}" in
         printf '{"hasLoginWall": false, "loginHits": []}\n'
         ;;
       *:page-info)
-        printf '{"title": "Page", "url": "%s"}\n' "${PAGE_INFO_URL_RESPONSE:-https://protected.example/dashboard}"
+        page_info_url="$(next_sequence_value page_info_url "${PAGE_INFO_URL_SEQUENCE:-${PAGE_INFO_URL_RESPONSE:-https://protected.example/dashboard}}")"
+        printf '{"title": "Page", "url": "%s"}\n' "$page_info_url"
         ;;
       *)
         printf '{}\n'
@@ -131,6 +137,39 @@ case "${1:-}" in
 esac
 EOF
   chmod +x "$tmp/bin/browser-runtime.sh"
+
+  cat >"$tmp/bin/host-page-ops.py" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+LOG="${LOG_FILE}"
+STATE_DIR="${RUNTIME_STATE_DIR:-}"
+echo "page-ops:$*" >>"$LOG"
+
+navigate_url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --navigate)
+      navigate_url="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ -n "$navigate_url" ] && [ -n "$STATE_DIR" ]; then
+  mkdir -p "$STATE_DIR"
+  count_file="$STATE_DIR/navigate.count"
+  count=0
+  if [ -f "$count_file" ]; then
+    count="$(cat "$count_file" 2>/dev/null || printf '0')"
+  fi
+  printf '%s\n' "$((count + 1))" >"$count_file"
+fi
+printf '{"ok":true}\n'
+EOF
+  chmod +x "$tmp/bin/host-page-ops.py"
 
   cat >"$tmp/bin/assist-lan-session.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -210,6 +249,17 @@ assert_start_count() {
   [ "$actual" = "$expected" ]
 }
 
+assert_navigate_count() {
+  local tmp="$1"
+  local expected="$2"
+  local count_file="$tmp/runtime-state/navigate.count"
+  local actual="0"
+  if [ -f "$count_file" ]; then
+    actual="$(cat "$count_file")"
+  fi
+  [ "$actual" = "$expected" ]
+}
+
 run_lightweight() {
   local tmp="$1"
   local output
@@ -220,6 +270,7 @@ run_lightweight() {
     HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
     HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
     HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
     HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
     HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
       bash "$BASE_DIR/open-host-page.sh" \
@@ -249,6 +300,7 @@ run_expected_action_failure() {
     HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
     HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
     HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
     HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
     HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
       bash "$BASE_DIR/open-host-page.sh" \
@@ -281,6 +333,7 @@ run_browser_path() {
     HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
     HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
     HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
     HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
     HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
       bash "$BASE_DIR/open-host-page.sh" \
@@ -334,6 +387,7 @@ run_assist_path_challenge() {
     HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
     HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
     HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
     HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
     HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
       bash "$BASE_DIR/open-host-page.sh" \
@@ -371,6 +425,7 @@ run_assist_path_login_wall() {
     HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
     HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
     HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
     HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
     HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
       bash "$BASE_DIR/open-host-page.sh" \
@@ -401,13 +456,14 @@ run_wrong_page_recovery_success() {
     PROFILE_DIR_RESPONSE="$tmp/resolved-profile" \
     RUNTIME_STATUS_RESPONSE=running \
     VERIFY_BEHAVIOR=success \
-    SELECT_TARGET_SEQUENCE="__EMPTY__,page-dashboard" \
+    SELECT_TARGET_SEQUENCE="page-dashboard,page-dashboard" \
     PAGE_STATUS_RESPONSE=ready \
-    PAGE_INFO_URL_RESPONSE="https://protected.example/dashboard" \
+    PAGE_INFO_URL_SEQUENCE="https://protected.example/unrelated,https://protected.example/dashboard" \
     RUNTIME_STATE_DIR="$tmp/runtime-state" \
     HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
     HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
     HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
     HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
     HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
       bash "$BASE_DIR/open-host-page.sh" \
@@ -422,7 +478,9 @@ run_wrong_page_recovery_success() {
   assert_json_value "$output" recovery_attempted true
   assert_json_value "$output" target_id page-dashboard
   ! grep -q '^assist:' "$tmp/actions.log"
-  assert_start_count "$tmp" 1
+  assert_start_count "$tmp" 0
+  assert_navigate_count "$tmp" 1
+  grep -q '^page-ops:.*--navigate https://protected.example/dashboard' "$tmp/actions.log"
 }
 
 run_wrong_page_recovery_assisted() {
@@ -434,13 +492,15 @@ run_wrong_page_recovery_assisted() {
     PROFILE_DIR_RESPONSE="$tmp/resolved-profile" \
     RUNTIME_STATUS_RESPONSE=running \
     VERIFY_BEHAVIOR=success \
-    SELECT_TARGET_SEQUENCE="__EMPTY__,__EMPTY__" \
+    SELECT_TARGET_SEQUENCE="page-dashboard,page-dashboard" \
     PAGE_STATUS_RESPONSE=ready \
+    PAGE_INFO_URL_SEQUENCE="https://protected.example/unrelated,https://protected.example/unrelated-still" \
     RUNTIME_STATE_DIR="$tmp/runtime-state" \
     ASSIST_LAN_URL_RESPONSE="http://192.168.1.99:6084/vnc.html?autoconnect=1&resize=remote" \
     HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
     HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
     HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
     HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
     HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
       bash "$BASE_DIR/open-host-page.sh" \
@@ -453,10 +513,12 @@ run_wrong_page_recovery_assisted() {
   assert_json_has_fields "$output" page_status recovery_attempted assisted_session lan_novnc_url
   assert_json_value "$output" page_status target-mismatch
   assert_json_value "$output" recovery_attempted true
-  assert_json_missing_field "$output" target_id
+  assert_json_value "$output" target_id page-dashboard
   assert_json_value "$output" assisted_session true
   assert_json_value "$output" lan_novnc_url "http://192.168.1.99:6084/vnc.html?autoconnect=1&resize=remote"
-  assert_start_count "$tmp" 1
+  assert_start_count "$tmp" 0
+  assert_navigate_count "$tmp" 1
+  grep -q '^page-ops:.*--navigate https://protected.example/dashboard' "$tmp/actions.log"
   grep -q '^assist:start ' "$tmp/actions.log"
 }
 
