@@ -4,7 +4,7 @@
   - `open-host-page.sh` now emits structured JSON on lightweight and browser paths, with assisted-only `lan_novnc_url` output
   - Route semantics are documented explicitly: `task-mode` is caller intent, `route` is normalized to `search` / `fetch` / `browser`, and `reason` preserves the specific classification
   - `--expected-action` failures now describe a route assertion failure before browser orchestration starts
-  - `assist-lan-session.sh` now tells operators to set `AGENT_BROWSER_NOVNC_PUBLIC_HOST` explicitly when loopback detection blocks LAN exposure
+  - `assist-lan-session.sh` now tells operators to set `AGENT_BROWSER_NOVNC_PUBLIC_HOST` explicitly for LAN exposure when host defaults are ambiguous
   - `host-page-ops.py` now exposes generic retry/readiness flags plus shell-safe invocation guidance in `--help`
   - Draft docs now include direct, copyable examples for `host-page-ops.py` and `host-page-snapshot.py`
 - Accepted in narrower form:
@@ -31,7 +31,7 @@
   - `python3 -m py_compile drafts/host-web-access/scripts/host-page-ops.py`
   - `python3 -m py_compile drafts/host-web-access/scripts/host-page-snapshot.py`
 - Coverage highlights:
-  - Assisted recovery verification confirms the fixed LAN port `6084`, `lan_novnc_url`-only status output, explicit loopback rejection guidance, manifest capture, and cleanup
+  - Assisted recovery verification confirms the fixed LAN port `6084`, `lan_novnc_url`-only status output, explicit LAN host configuration guidance, manifest capture, and cleanup
   - Integrated entrypoint verification confirms lightweight vs browser routing, structured JSON output, route assertion failures before runtime startup, profile resolution before browser start, assisted capture on non-running status, and unconditional cleanup
   - Helper verification confirms local-only CDP ownership, retry/help surface exposure, and snapshot helper CLI coverage
 - Remaining gap:

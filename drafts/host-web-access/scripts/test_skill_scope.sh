@@ -6,6 +6,8 @@ SKILL_DOC="$ROOT_DIR/SKILL.md"
 IDENTITY_POLICY_DOC="$ROOT_DIR/references/identity-session-policy.md"
 USE_CASES_DOC="$ROOT_DIR/references/use-cases.md"
 TEST_MATRIX_DOC="$ROOT_DIR/references/testing-matrix.md"
+ASSISTED_LAN_FLOW_DOC="$ROOT_DIR/references/assisted-lan-flow.md"
+VALIDATION_FINDINGS_DOC="$ROOT_DIR/references/validation-findings.md"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -41,13 +43,18 @@ assert_contains "$TEST_MATRIX_DOC" "identity governance" "identity governance ma
 assert_contains "$TEST_MATRIX_DOC" "LAN-only assisted handoff" "LAN-only assisted handoff matrix coverage"
 assert_contains "$TEST_MATRIX_DOC" "browser-route continuity on protected tasks" "protected-task route continuity matrix coverage"
 
-assert_not_contains "$SKILL_DOC" "\\bnovnc_url\\b" "public docs should not expose generic novnc_url"
-assert_not_contains "$SKILL_DOC" "loopback" "public docs should not mention loopback handoff"
-assert_not_contains "$IDENTITY_POLICY_DOC" "\\bnovnc_url\\b" "identity policy should not expose generic novnc_url"
-assert_not_contains "$IDENTITY_POLICY_DOC" "loopback" "identity policy should not mention loopback handoff"
-assert_not_contains "$USE_CASES_DOC" "\\bnovnc_url\\b" "use cases should not expose generic novnc_url"
-assert_not_contains "$USE_CASES_DOC" "loopback" "use cases should not mention loopback handoff"
-assert_not_contains "$TEST_MATRIX_DOC" "\\bnovnc_url\\b" "testing matrix should not expose generic novnc_url"
-assert_not_contains "$TEST_MATRIX_DOC" "loopback" "testing matrix should not mention loopback handoff"
+PUBLIC_SCOPE_DOCS=(
+  "$SKILL_DOC"
+  "$IDENTITY_POLICY_DOC"
+  "$USE_CASES_DOC"
+  "$TEST_MATRIX_DOC"
+  "$ASSISTED_LAN_FLOW_DOC"
+  "$VALIDATION_FINDINGS_DOC"
+)
+
+for public_doc in "${PUBLIC_SCOPE_DOCS[@]}"; do
+  assert_not_contains "$public_doc" "\\bnovnc_url\\b" "public docs should not expose generic novnc_url"
+  assert_not_contains "$public_doc" "loopback" "public docs should not mention loopback handoff"
+done
 
 echo "PASS: scope contract checks passed"
