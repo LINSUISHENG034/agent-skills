@@ -416,6 +416,7 @@ run_assist_path_challenge() {
   grep -q '^assist:start .*--target-url https://protected.example/dashboard' "$tmp/actions.log"
   ! grep -q '^assist:capture ' "$tmp/actions.log"
   ! grep -q '^assist:stop ' "$tmp/actions.log"
+  ! grep -q '^cleanup:' "$tmp/actions.log"
 }
 
 run_assist_path_login_wall() {
@@ -455,6 +456,7 @@ run_assist_path_login_wall() {
   grep -q '^assist:start .*--target-url https://protected.example/dashboard' "$tmp/actions.log"
   ! grep -q '^assist:capture ' "$tmp/actions.log"
   ! grep -q '^assist:stop ' "$tmp/actions.log"
+  ! grep -q '^cleanup:' "$tmp/actions.log"
 }
 
 run_wrong_page_recovery_success() {
@@ -533,6 +535,7 @@ run_wrong_page_recovery_assisted() {
   grep -q '^assist:start .*--target-url https://protected.example/dashboard' "$tmp/actions.log"
   ! grep -q '^assist:capture ' "$tmp/actions.log"
   ! grep -q '^assist:stop ' "$tmp/actions.log"
+  ! grep -q '^cleanup:' "$tmp/actions.log"
 }
 
 run_expected_failure() {

@@ -200,6 +200,9 @@ profile_dir="$(json_field profile_dir "$resolved_profile")"
 [ -n "$profile_dir" ] || die "profile-resolution did not return profile_dir"
 
 cleanup_browser() {
+  if [ "${PRESERVE_RUNTIME_ON_EXIT:-false}" = "true" ]; then
+    return 0
+  fi
   "$CLEANUP_HELPER" --run-dir "$run_dir" >/dev/null 2>&1 || true
 }
 
@@ -307,8 +310,10 @@ fi
 
 assisted_session=""
 lan_novnc_url=""
+PRESERVE_RUNTIME_ON_EXIT="false"
 case "$page_status" in
   challenge|login-wall|target-mismatch)
+    PRESERVE_RUNTIME_ON_EXIT="true"
     assist_output="$("$ASSIST_HELPER" start \
       --run-dir "$run_dir" \
       --origin "$origin" \
