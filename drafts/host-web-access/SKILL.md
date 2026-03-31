@@ -7,4 +7,31 @@ metadata:
 
 # Host Web Access
 
-Minimal draft placeholder while the full workflow is implemented.
+Use this draft when the agent needs public research plus the ability to escalate into the Ubuntu host browser for durable session reuse, bounded assisted recovery, or interactive operations that fetch-only tools cannot cover.
+
+## Overview
+
+`open-host-page.sh` is the canonical entry point. It:
+
+- routes the request via `route-web-task.sh` so lightweight search/fetch take the default path for public content
+- honors `--task-mode` and `--expected-action` to document the intent and verify the router matches expectations
+- starts the Ubuntu-host browser only when the router returns `route: "browser"`, checks the runtime, performs local recovery, and triggers assisted LAN work only if the runtime is not running
+- always runs `cleanup-host-runtime.sh` so browser, Xvfb, x11vnc, and websockify PIDs are released after every task
+
+## Routing Philosophy
+
+Start with `WebSearch`, `WebFetch`, `curl`, or `Jina` for public requests. Escalate to the Ubuntu-host browser only when `route-web-task.sh` emits `route: "browser"` with reasons such as `protected-site`, `dynamic-rendering`, `interaction-required`, `login-required`, or `host-browser-requested`. The JSON result includes `needs_browser` so downstream steps can log why the heavier runtime was required.
+
+## Assisted LAN Flow
+
+The assisted path exposes a single fixed LAN `lan_novnc_url` (port 6084). Normal recovery never emits loopback or SSH-forwarded URLs, keeping firewall setup a one-time operation. The `capture` command writes both the session manifest and site-session registry entry, so future tasks reuse the same host profile.
+
+## Cleanup Guarantees
+
+Cleanup scripts stop browser, Xvfb, x11vnc, and websockify PIDs when present, remove temporary runtime directories, and rewrite the runtime state to `STATE=closed` while leaving persistent profile data untouched.
+
+## Use Cases
+
+- **Public research**: compare docs or fetch latest release notes with lightweight search/fetch; no browser ever starts because the router stays in `search` or `fetch`.
+- **Protected site reuse**: open GitHub/Google via the maintained host profile, use `--session-key` to target a specific identity, and rely on the quick assisted path only when the runtime cannot recover.
+- **Interactive tasks**: need clicking, uploads, or video frames; escalate to the host browser, use `host-page-ops.py` for DOM work, capture snapshots with `host-page-snapshot.py`, and fall back to the assisted flow if challenges appear.

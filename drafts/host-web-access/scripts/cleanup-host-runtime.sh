@@ -13,54 +13,41 @@ die() {
   exit 1
 }
 
+pid_file() {
+  printf '%s/%s.pid\n' "$RUN_DIR" "$1"
+}
+
 pid_running() {
   local pid="${1:-}"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+  [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1
 }
 
-read_pid_file() {
-  local file="$1"
-  if [ -f "$file" ]; then
-    cat "$file"
-  fi
-}
-
-stop_pid_file() {
-  local file="$1"
-  local pid
-  pid="$(read_pid_file "$file")"
-  if pid_running "$pid"; then
-    kill -TERM "$pid" 2>/dev/null || true
-    sleep 1
+stop_pid() {
+  local key="$1"
+  local path pid
+  path="$(pid_file "$key")"
+  if [ -f "$path" ]; then
+    pid="$(cat "$path")"
     if pid_running "$pid"; then
-      kill -KILL "$pid" 2>/dev/null || true
+      kill "$pid" >/dev/null 2>&1 || true
+      sleep 0.5
+      pid_running "$pid" && kill -9 "$pid" >/dev/null 2>&1 || true
     fi
+    rm -f "$path"
   fi
-  rm -f "$file"
 }
 
-write_closed_state() {
-  local run_dir="$1"
-  local state_file="$run_dir/runtime.env"
-  local tmp_file
-  tmp_file="$(mktemp)"
-
+mark_closed() {
+  local state_file="$RUN_DIR/runtime.env"
   if [ -f "$state_file" ]; then
-    awk '
-      BEGIN { wrote=0 }
-      /^STATE=/ { print "STATE=closed"; wrote=1; next }
-      { print }
-      END { if (!wrote) print "STATE=closed" }
-    ' "$state_file" >"$tmp_file"
+    awk 'BEGIN {closed=0} /^STATE=/ {print "STATE=closed"; closed=1; next} /^state=/ {print "state=closed"; closed=1; next} {print} END {if (!closed) print "STATE=closed\nstate=closed"}' "$state_file" >"$state_file.tmp"
+    mv "$state_file.tmp" "$state_file"
   else
-    printf 'STATE=closed\nRUN_DIR=%q\n' "$run_dir" >"$tmp_file"
+    printf 'STATE=closed\nstate=closed\nRUN_DIR=%s\n' "$RUN_DIR" >"$state_file"
   fi
-
-  mv "$tmp_file" "$state_file"
 }
 
 RUN_DIR=""
-
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --run-dir)
@@ -80,9 +67,9 @@ done
 [ -n "$RUN_DIR" ] || die "missing required argument: --run-dir"
 mkdir -p "$RUN_DIR"
 
-stop_pid_file "$RUN_DIR/browser.pid"
-stop_pid_file "$RUN_DIR/xvfb.pid"
-stop_pid_file "$RUN_DIR/x11vnc.pid"
-stop_pid_file "$RUN_DIR/websockify.pid"
-rm -rf "$RUN_DIR/tmp"
-write_closed_state "$RUN_DIR"
+stop_pid browser
+stop_pid xvfb
+stop_pid x11vnc
+stop_pid websockify
+rm -rf "$RUN_DIR/tmp" "$RUN_DIR/logs"
+mark_closed

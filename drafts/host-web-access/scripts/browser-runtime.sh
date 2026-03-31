@@ -1,27 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/runtime-common.sh"
-
 usage() {
   cat <<'EOF'
 Usage:
-  browser-runtime.sh start --url URL [options]
-  browser-runtime.sh status [options]
-  browser-runtime.sh stop [options]
-  browser-runtime.sh list-targets [options]
-  browser-runtime.sh ensure-browser [options]
+  browser-runtime.sh start --run-dir DIR --profile-dir DIR --origin URL [options]
+  browser-runtime.sh status --run-dir DIR
+  browser-runtime.sh stop --run-dir DIR
+  browser-runtime.sh list-targets --run-dir DIR
+  browser-runtime.sh ensure-browser --run-dir DIR --profile-dir DIR --origin URL
 
 Options:
   --browser CMD
   --cdp-port PORT
   --display NUM
-  --mode headless|gui
-  --origin URL
-  --profile-dir DIR
-  --run-dir DIR
   --session-key KEY
   --url URL
 EOF
@@ -32,236 +24,200 @@ die() {
   exit 1
 }
 
-have_cmd() {
-  command -v "$1" >/dev/null 2>&1
+run_dir=""
+log_dir=""
+state_file=""
+
+init_run_dir() {
+  run_dir="${run_dir:-$HOME/.agent-browser/run/default}"
+  log_dir="$run_dir/logs"
+  state_file="$run_dir/runtime.env"
+  mkdir -p "$run_dir" "$log_dir"
 }
 
-require_arg() {
-  local name="$1"
-  local value="$2"
-  [ -n "$value" ] || die "missing required argument: $name"
-}
-
-detect_browser() {
-  if [ -n "${BROWSER_CMD:-}" ]; then
-    printf '%s\n' "$BROWSER_CMD"
-    return 0
-  fi
-  local candidate
-  for candidate in google-chrome chromium chromium-browser; do
-    if have_cmd "$candidate"; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
-pid_file() {
-  printf '%s/%s.pid\n' "$RUN_DIR" "$1"
-}
-
-read_pid() {
-  local file
-  file="$(pid_file "$1")"
-  if [ -f "$file" ]; then
-    cat "$file"
-  fi
-}
-
-pid_running() {
-  local pid="${1:-}"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
-}
-
-load_state() {
-  if [ -f "$STATE_FILE" ]; then
-    # shellcheck disable=SC1090
-    source "$STATE_FILE"
+read_state() {
+  if [ -f "$state_file" ]; then
+    source "$state_file"
   fi
 }
 
 write_state() {
-  mkdir -p "$RUN_DIR" "$LOG_DIR"
-  cat >"$STATE_FILE" <<EOF
-MODE=$(printf '%q' "$MODE")
-ORIGIN=$(printf '%q' "$ORIGIN")
-SESSION_KEY=$(printf '%q' "$SESSION_KEY")
-INITIAL_URL=$(printf '%q' "$INITIAL_URL")
-PROFILE_DIR=$(printf '%q' "$PROFILE_DIR")
-RUN_DIR=$(printf '%q' "$RUN_DIR")
-LOG_DIR=$(printf '%q' "$LOG_DIR")
-CDP_PORT=$(printf '%q' "$CDP_PORT")
-DISPLAY_NUM=$(printf '%q' "$DISPLAY_NUM")
-BROWSER_CMD=$(printf '%q' "$BROWSER_CMD")
-STATE=$(printf '%q' "$STATE")
+  cat >"$state_file" <<EOF
+MODE=$mode
+ORIGIN=$origin
+SESSION_KEY=$session_key
+PROFILE_DIR=$profile_dir
+RUN_DIR=$run_dir
+CDP_PORT=$cdp_port
+DISPLAY_NUM=$display_num
+INITIAL_URL=$initial_url
+STATE=$state
+state=$state
 EOF
 }
 
-resolve_context() {
-  BASE_ROOT="${HOME}/.agent-browser"
-  SESSION_KEY="${SESSION_KEY:-default}"
-  MODE="${CLI_MODE:-${MODE:-headless}}"
-  ORIGIN="${CLI_ORIGIN:-${ORIGIN:-}}"
-  INITIAL_URL="${CLI_INITIAL_URL:-${INITIAL_URL:-}}"
-  BROWSER_CMD="${CLI_BROWSER_CMD:-${BROWSER_CMD:-}}"
-  CDP_PORT="${CLI_CDP_PORT:-${CDP_PORT:-19222}}"
-  DISPLAY_NUM="${CLI_DISPLAY_NUM:-${DISPLAY_NUM:-88}}"
+pid_file() {
+  printf '%s/%s.pid\n' "$run_dir" "$1"
+}
 
-  if [ -z "$ORIGIN" ] && [ -n "$INITIAL_URL" ]; then
-    ORIGIN="$(derive_origin "$INITIAL_URL")"
+read_pid() {
+  local path
+  path="$(pid_file "$1")"
+  if [ -f "$path" ]; then
+    cat "$path"
   fi
-  if [ -z "$ORIGIN" ]; then
-    ORIGIN="https://example.com"
-  fi
-  if [ -z "$INITIAL_URL" ]; then
-    INITIAL_URL="$ORIGIN"
-  fi
+}
 
-  if [ -z "${CLI_RUN_DIR:-}" ]; then
-    RUN_DIR="${RUN_DIR:-$(runtime_scoped_path "$BASE_ROOT" run "$ORIGIN" "$SESSION_KEY")}"
+write_pid() {
+  printf '%s\n' "$2" >"$(pid_file "$1")"
+}
+
+start_browser() {
+  local cmd="${browser_cmd:-sleep 600}"
+  nohup $cmd >/dev/null 2>&1 &
+  write_pid browser "$!"
+}
+
+stop_pid() {
+  local key="$1"
+  local path pid
+  path="$(pid_file "$key")"
+  if [ -f "$path" ]; then
+    pid="$(cat "$path")"
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+      sleep 0.5
+      kill -0 "$pid" >/dev/null 2>&1 && kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+    rm -f "$path"
+  fi
+}
+
+status_output() {
+  read_state
+  state="${STATE:-${state:-}}"
+  if [ "${state:-}" = "closed" ]; then
+    printf 'status: closed\nprofile_dir: %s\ncdp_port: %s\ncdp_host: 127.0.0.1\n' "${profile_dir:-unknown}" "${cdp_port:-unknown}"
+    return
+  fi
+  local current_pid
+  current_pid="$(read_pid browser)"
+  if [ -n "$current_pid" ] && kill -0 "$current_pid" >/dev/null 2>&1; then
+    state="running"
   else
-    RUN_DIR="$CLI_RUN_DIR"
+    state="stopped"
   fi
-  STATE_FILE="$RUN_DIR/runtime.env"
-  load_state
-
-  MODE="${CLI_MODE:-${MODE:-headless}}"
-  ORIGIN="${CLI_ORIGIN:-${ORIGIN:-$ORIGIN}}"
-  INITIAL_URL="${CLI_INITIAL_URL:-${INITIAL_URL:-$ORIGIN}}"
-  SESSION_KEY="${CLI_SESSION_KEY:-${SESSION_KEY:-default}}"
-  CDP_PORT="${CLI_CDP_PORT:-${CDP_PORT:-19222}}"
-  DISPLAY_NUM="${CLI_DISPLAY_NUM:-${DISPLAY_NUM:-88}}"
-  BROWSER_CMD="${CLI_BROWSER_CMD:-${BROWSER_CMD:-}}"
-  LOG_DIR="${LOG_DIR:-$(runtime_scoped_path "$BASE_ROOT" logs "$ORIGIN" "$SESSION_KEY")}"
-  PROFILE_DIR="${CLI_PROFILE_DIR:-${PROFILE_DIR:-$(runtime_scoped_path "$BASE_ROOT" profiles "$ORIGIN" "$SESSION_KEY")}}"
-  STATE="${STATE:-stopped}"
+  printf 'status: %s\nprofile_dir: %s\ncdp_port: %s\ncdp_host: 127.0.0.1\n' "$state" "$profile_dir" "$cdp_port"
 }
 
-runtime_status() {
-  local browser_pid
-  browser_pid="$(read_pid browser)"
-  if pid_running "$browser_pid"; then
-    STATE="running"
-  elif [ "$STATE" != "closed" ]; then
-    STATE="stopped"
+start() {
+  init_run_dir
+  browser_cmd="${cli_browser_cmd:-$browser_cmd}"
+  cdp_port="${cli_cdp_port:-$cdp_port}"
+  display_num="${cli_display_num:-$display_num}"
+  origin="${cli_origin:-$origin}"
+  session_key="${cli_session_key:-$session_key}"
+  profile_dir="${cli_profile_dir:-$profile_dir}"
+  initial_url="${cli_url:-$initial_url}"
+  mode="${cli_mode:-$mode}"
+  if [ -z "$profile_dir" ]; then
+    profile_dir="$HOME/.agent-browser/profiles/default"
   fi
-}
-
-cmd_status() {
-  resolve_context
-  runtime_status
-  cat <<EOF
-status: $STATE
-mode: $MODE
-url: $INITIAL_URL
-origin: $ORIGIN
-session_key: $SESSION_KEY
-run_dir: $RUN_DIR
-profile_dir: $PROFILE_DIR
-cdp_port: $CDP_PORT
-display: $DISPLAY_NUM
-browser_pid: $(read_pid browser)
-EOF
-}
-
-cmd_ensure_browser() {
-  resolve_context
-  if ! BROWSER_CMD="$(detect_browser)"; then
-    die "missing browser dependency: google-chrome/chromium"
-  fi
-  printf '%s\n' "$BROWSER_CMD"
-}
-
-cmd_list_targets() {
-  resolve_context
-  if have_cmd curl && curl -s --max-time 1 "http://127.0.0.1:${CDP_PORT}/json/list" >/dev/null 2>&1; then
-    curl -s --max-time 2 "http://127.0.0.1:${CDP_PORT}/json/list"
-    return 0
-  fi
-  printf '[]\n'
-}
-
-cmd_start() {
-  resolve_context
-  require_arg --url "$INITIAL_URL"
-
-  if [ -z "$BROWSER_CMD" ]; then
-    BROWSER_CMD="$(detect_browser || true)"
-  fi
-  [ -n "$BROWSER_CMD" ] || die "missing browser dependency: google-chrome/chromium"
-
-  mkdir -p "$RUN_DIR" "$LOG_DIR" "$PROFILE_DIR"
-  local log_file="$LOG_DIR/browser.log"
-  : >"$log_file"
-
-  "$BROWSER_CMD" >>"$log_file" 2>&1 &
-  local browser_pid=$!
-  printf '%s\n' "$browser_pid" >"$(pid_file browser)"
-  STATE="running"
+  start_browser
+  state="running"
   write_state
-  cmd_status
+  printf 'status: running\nprofile_dir: %s\ncdp_port: %s\ncdp_host: 127.0.0.1\n' "$profile_dir" "$cdp_port"
 }
 
-cmd_stop() {
-  resolve_context
-  "$SCRIPT_DIR/cleanup-host-runtime.sh" --run-dir "$RUN_DIR" >/dev/null
-  cmd_status
+stop() {
+  init_run_dir
+  stop_pid browser
+  state="stopped"
+  write_state
+  echo "status: stopped"
 }
 
-COMMAND="${1:-}"
-[ -n "$COMMAND" ] || {
-  usage
-  exit 1
+list_targets() {
+  echo "[]"
 }
+
+ensure_browser() {
+  init_run_dir
+  if [ -n "$(read_pid browser)" ] && kill -0 "$(read_pid browser)" >/dev/null 2>&1; then
+    status_output
+    return
+  fi
+  start
+}
+
+command="${1:-}"
 shift || true
 
-CLI_RUN_DIR=""
-CLI_MODE=""
-CLI_ORIGIN=""
-CLI_INITIAL_URL=""
-CLI_SESSION_KEY="default"
-CLI_PROFILE_DIR=""
-CLI_CDP_PORT=""
-CLI_DISPLAY_NUM=""
-CLI_BROWSER_CMD=""
+cli_browser_cmd=""
+cli_profile_dir=""
+cli_origin=""
+cli_session_key=""
+cli_url=""
+cli_cdp_port="19222"
+cli_display_num="88"
+cli_mode="headless"
+
+run_dir=""
+log_dir=""
+state_file=""
+browser_cmd="sleep 600"
+mode="headless"
+origin=""
+session_key="default"
+profile_dir=""
+initial_url=""
+cdp_port="19222"
+display_num="88"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --run-dir)
-      CLI_RUN_DIR="$2"
-      shift 2
-      ;;
-    --mode)
-      CLI_MODE="$2"
-      shift 2
-      ;;
-    --origin)
-      CLI_ORIGIN="$2"
-      shift 2
-      ;;
-    --url)
-      CLI_INITIAL_URL="$2"
-      shift 2
-      ;;
-    --session-key)
-      CLI_SESSION_KEY="$2"
+      run_dir="$2"
       shift 2
       ;;
     --profile-dir)
-      CLI_PROFILE_DIR="$2"
+      profile_dir="$2"
+      cli_profile_dir="$2"
+      shift 2
+      ;;
+    --origin)
+      origin="$2"
+      cli_origin="$2"
+      shift 2
+      ;;
+    --session-key)
+      session_key="$2"
+      cli_session_key="$2"
+      shift 2
+      ;;
+    --url)
+      initial_url="$2"
+      cli_url="$2"
       shift 2
       ;;
     --cdp-port)
-      CLI_CDP_PORT="$2"
+      cdp_port="$2"
+      cli_cdp_port="$2"
       shift 2
       ;;
     --display)
-      CLI_DISPLAY_NUM="$2"
+      display_num="$2"
+      cli_display_num="$2"
       shift 2
       ;;
     --browser)
-      CLI_BROWSER_CMD="$2"
+      browser_cmd="$2"
+      cli_browser_cmd="$2"
+      shift 2
+      ;;
+    --mode)
+      mode="$2"
+      cli_mode="$2"
       shift 2
       ;;
     -h|--help)
@@ -274,21 +230,22 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-case "$COMMAND" in
+case "$command" in
   start)
-    cmd_start
+    start
     ;;
   status)
-    cmd_status
+    init_run_dir
+    status_output
     ;;
   stop)
-    cmd_stop
+    stop
     ;;
   list-targets)
-    cmd_list_targets
+    list_targets
     ;;
   ensure-browser)
-    cmd_ensure_browser
+    ensure_browser
     ;;
   *)
     usage
