@@ -199,6 +199,17 @@ assert sys.argv[2] not in data, data
 PY
 }
 
+assert_start_count() {
+  local tmp="$1"
+  local expected="$2"
+  local count_file="$tmp/runtime-state/start.count"
+  local actual="0"
+  if [ -f "$count_file" ]; then
+    actual="$(cat "$count_file")"
+  fi
+  [ "$actual" = "$expected" ]
+}
+
 run_lightweight() {
   local tmp="$1"
   local output
@@ -344,6 +355,43 @@ run_assist_path_challenge() {
   grep -q '^assist:stop ' "$tmp/actions.log"
 }
 
+run_assist_path_login_wall() {
+  local tmp="$1"
+  local output
+  setup_stubs "$tmp"
+  output="$(
+    LOG_FILE="$tmp/actions.log" \
+    PROFILE_DIR_RESPONSE="$tmp/resolved-profile" \
+    RUNTIME_STATUS_RESPONSE=running \
+    VERIFY_BEHAVIOR=success \
+    SELECT_TARGET_SEQUENCE=page-login \
+    PAGE_STATUS_RESPONSE=login-wall \
+    RUNTIME_STATE_DIR="$tmp/runtime-state" \
+    ASSIST_LAN_URL_RESPONSE="http://192.168.1.55:6084/vnc.html?autoconnect=1&resize=remote" \
+    HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
+    HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
+    HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
+    HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
+      bash "$BASE_DIR/open-host-page.sh" \
+      --url "https://protected.example/dashboard" \
+      --task-mode interactive \
+      --expected-action browser \
+      --run-dir "$tmp/assist-login-run"
+  )"
+
+  assert_json_has_fields "$output" route reason needs_browser origin run_dir profile_dir runtime_status page_status target_id recovery_attempted assisted_session lan_novnc_url
+  assert_json_value "$output" runtime_status running
+  assert_json_value "$output" page_status login-wall
+  assert_json_value "$output" target_id page-login
+  assert_json_value "$output" recovery_attempted false
+  assert_json_value "$output" assisted_session true
+  assert_json_value "$output" lan_novnc_url "http://192.168.1.55:6084/vnc.html?autoconnect=1&resize=remote"
+  grep -q '^assist:start ' "$tmp/actions.log"
+  grep -q '^assist:capture ' "$tmp/actions.log"
+  grep -q '^assist:stop ' "$tmp/actions.log"
+}
+
 run_wrong_page_recovery_success() {
   local tmp="$1"
   local output
@@ -374,7 +422,7 @@ run_wrong_page_recovery_success() {
   assert_json_value "$output" recovery_attempted true
   assert_json_value "$output" target_id page-dashboard
   ! grep -q '^assist:' "$tmp/actions.log"
-  grep -q 'runtime:start .*--run-dir '"$tmp"'/recovery-run' "$tmp/actions.log"
+  assert_start_count "$tmp" 1
 }
 
 run_wrong_page_recovery_assisted() {
@@ -408,7 +456,7 @@ run_wrong_page_recovery_assisted() {
   assert_json_missing_field "$output" target_id
   assert_json_value "$output" assisted_session true
   assert_json_value "$output" lan_novnc_url "http://192.168.1.99:6084/vnc.html?autoconnect=1&resize=remote"
-  grep -q 'runtime:start .*--run-dir '"$tmp"'/recovery-assist-run' "$tmp/actions.log"
+  assert_start_count "$tmp" 1
   grep -q '^assist:start ' "$tmp/actions.log"
 }
 
@@ -428,5 +476,6 @@ run_lightweight "$TMP_DIR/light"
 run_expected_action_failure "$TMP_DIR/route-assert"
 run_browser_path "$TMP_DIR/browser"
 run_assist_path_challenge "$TMP_DIR/assist-challenge"
+run_assist_path_login_wall "$TMP_DIR/assist-login-wall"
 run_wrong_page_recovery_success "$TMP_DIR/recovery-success"
 run_wrong_page_recovery_assisted "$TMP_DIR/recovery-assist"
