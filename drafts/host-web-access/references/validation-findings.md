@@ -1,6 +1,22 @@
 # Validation Findings
 
-- Local validation completed on the consolidated draft worktree. Fresh verification commands all exited 0:
+- Accepted as valid and remediated:
+  - `open-host-page.sh` now emits structured JSON on lightweight and browser paths, with assisted-only `lan_novnc_url` output
+  - Route semantics are documented explicitly: `task-mode` is caller intent, `route` is normalized to `search` / `fetch` / `browser`, and `reason` preserves the specific classification
+  - `--expected-action` failures now describe a route assertion failure before browser orchestration starts
+  - `assist-lan-session.sh` now tells operators to set `AGENT_BROWSER_NOVNC_PUBLIC_HOST` explicitly when loopback detection blocks LAN exposure
+  - `host-page-ops.py` now exposes generic retry/readiness flags plus shell-safe invocation guidance in `--help`
+  - Draft docs now include direct, copyable examples for `host-page-ops.py` and `host-page-snapshot.py`
+- Accepted in narrower form:
+  - The semantics concern around `--expected-action` was fixed as documentation plus failure-message clarity; no `--expected-step` expansion was added
+  - `lan_novnc_url` remains assisted-only and is not emitted on normal browser startup success
+  - Dynamic-page handling was improved with a small generic `--retry N --retry-delay-ms MS` surface for `--eval` and `--check`, without adding site-specific selectors or orchestration
+- Rejected or deferred:
+  - `session-key` default coupling was not treated as an isolation bug because origin-scoped runtime and profile paths already prevent collisions
+  - `--wait-navigation` shell parsing misuse remains a caller-side command construction problem; the remediation is documentation and `--help` guidance, not a CLI rename
+  - Site-specific behavior such as `linux.do` throttling or Discourse extraction helpers remains outside this generic skill
+  - Automatic `web_fetch` to browser fallback and lightweight/no-profile runtime modes remain out of scope for this remediation
+- Local verification commands executed successfully in the remediation worktree:
   - `bash drafts/host-web-access/scripts/test_runtime_common.sh`
   - `bash drafts/host-web-access/scripts/test_session_manifest.sh`
   - `bash drafts/host-web-access/scripts/test_site_session_registry.sh`
@@ -11,9 +27,12 @@
   - `bash drafts/host-web-access/scripts/test_host_page_snapshot.sh`
   - `bash drafts/host-web-access/scripts/test_route_web_task.sh`
   - `bash drafts/host-web-access/scripts/test_open_host_page.sh`
-  - `python3 -m py_compile drafts/host-web-access/scripts/host-cdp-core.py drafts/host-web-access/scripts/host-page-ops.py drafts/host-web-access/scripts/host-page-snapshot.py`
-- Task coverage: runtime lifecycle, local CDP ownership, assisted LAN recovery, profile resolution, router behavior, and the integrated open-host-page entry path each have a local verification command
-- Assisted recovery: `test_assist_lan_session.sh` confirms the fixed LAN port `6084`, status output only reports `lan_novnc_url`, capture writes the manifest/site registry, and stop releases assisted runtime state
-- Integrated flow: `test_open_host_page.sh` validates lightweight routing vs browser escalation, confirms `profile-resolution.sh resolve` is called before browser startup, exercises assisted capture when the runtime is not running, and ensures cleanup is always invoked
-- Cleanup invariants: `cleanup-host-runtime.sh` stops browser/Xvfb/x11vnc/websockify PIDs if present and rewrites runtime metadata to `STATE=closed` without touching persistent profiles
-- Real-host validation is still pending. The draft has not yet been validated against an actual Ubuntu host browser session and a Windows LAN client in this worktree.
+  - `python3 -m py_compile drafts/host-web-access/scripts/host-cdp-core.py`
+  - `python3 -m py_compile drafts/host-web-access/scripts/host-page-ops.py`
+  - `python3 -m py_compile drafts/host-web-access/scripts/host-page-snapshot.py`
+- Coverage highlights:
+  - Assisted recovery verification confirms the fixed LAN port `6084`, `lan_novnc_url`-only status output, explicit loopback rejection guidance, manifest capture, and cleanup
+  - Integrated entrypoint verification confirms lightweight vs browser routing, structured JSON output, route assertion failures before runtime startup, profile resolution before browser start, assisted capture on non-running status, and unconditional cleanup
+  - Helper verification confirms local-only CDP ownership, retry/help surface exposure, and snapshot helper CLI coverage
+- Remaining gap:
+  - Real-host validation is still pending. This remediation has not yet been exercised against a live Ubuntu host browser session and an actual LAN client in this worktree.

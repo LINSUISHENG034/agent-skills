@@ -14,7 +14,7 @@ Options:
   --url URL
   --session-key KEY
   --task-mode MODE           latest|article|dynamic|protected|interactive|login-required|host-browser
-  --expected-action ACTION   lightweight|browser
+  --expected-action ACTION   search|fetch|browser (legacy lightweight alias accepted)
   --run-dir DIR
   --manifest-root DIR
 EOF
@@ -28,6 +28,23 @@ die() {
 route_for_mode() {
   local mode="$1"
   "$ROUTE_HELPER" "--$mode"
+}
+
+status_field() {
+  local field="$1"
+  local payload="$2"
+  python3 - "$field" "$payload" <<'PY'
+import sys
+
+target = sys.argv[1]
+for raw in sys.argv[2].splitlines():
+    if ":" not in raw:
+        continue
+    key, value = raw.split(":", 1)
+    if key.strip() == target:
+        print(value.strip())
+        break
+PY
 }
 
 json_field() {
@@ -45,6 +62,56 @@ if isinstance(value, bool):
 elif value is not None:
     print(value)
 PY
+}
+
+emit_result() {
+  python3 - "$@" <<'PY'
+import json
+import sys
+
+route, reason, needs_browser, origin, run_dir, profile_dir, runtime_status, assisted_session, lan_novnc_url = sys.argv[1:10]
+
+payload = {
+    "route": route,
+    "reason": reason,
+    "needs_browser": needs_browser == "true",
+    "origin": origin,
+}
+
+if run_dir:
+    payload["run_dir"] = run_dir
+if profile_dir:
+    payload["profile_dir"] = profile_dir
+if runtime_status:
+    payload["runtime_status"] = runtime_status
+if assisted_session:
+    payload["assisted_session"] = assisted_session == "true"
+if lan_novnc_url:
+    payload["lan_novnc_url"] = lan_novnc_url
+
+print(json.dumps(payload))
+PY
+}
+
+assert_expected_route() {
+  case "$expected_action" in
+    "")
+      return 0
+      ;;
+    lightweight)
+      if [ "$route" = "browser" ]; then
+        die "route assertion failed before browser orchestration started: expected lightweight route but router returned browser"
+      fi
+      ;;
+    search|fetch|browser)
+      if [ "$route" != "$expected_action" ]; then
+        die "route assertion failed before browser orchestration started: expected route $expected_action but router returned $route"
+      fi
+      ;;
+    *)
+      die "--expected-action must be search, fetch, browser, or legacy lightweight"
+      ;;
+  esac
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -108,18 +175,10 @@ route_output="$(route_for_mode "$task_mode")"
 route="$(json_field route "$route_output")"
 reason="$(json_field reason "$route_output")"
 needs_browser="$(json_field needs_browser "$route_output")"
-
-if [ -n "$expected_action" ]; then
-  if [ "$expected_action" = "browser" ] && [ "$route" != "browser" ]; then
-    die "expected browser route but got $route"
-  fi
-  if [ "$expected_action" = "lightweight" ] && [ "$route" = "browser" ]; then
-    die "expected lightweight route but got browser"
-  fi
-fi
+assert_expected_route
 
 if [ "$route" != "browser" ]; then
-  printf 'route: %s reason: %s needs_browser: %s\n' "$route" "$reason" "$needs_browser"
+  emit_result "$route" "$reason" "$needs_browser" "$origin" "" "" "" "" ""
   exit 0
 fi
 
@@ -152,13 +211,18 @@ fi
   --mode gui >/dev/null
 
 status_output="$("$BROWSER_RUNTIME_HELPER" status --run-dir "$run_dir" --origin "$origin" --session-key "$session_key")"
-if ! printf '%s\n' "$status_output" | grep -q '^status: running$'; then
-  "$ASSIST_HELPER" start \
+runtime_status="$(status_field status "$status_output")"
+assisted_session=""
+lan_novnc_url=""
+if [ "$runtime_status" != "running" ]; then
+  assist_output="$("$ASSIST_HELPER" start \
     --run-dir "$run_dir" \
     --origin "$origin" \
     --session-key "$session_key" \
     --profile-dir "$profile_dir" \
-    --manifest-root "$manifest_root" >/dev/null
+    --manifest-root "$manifest_root")"
+  lan_novnc_url="$(status_field lan_novnc_url "$assist_output")"
+  assisted_session="true"
   "$ASSIST_HELPER" capture \
     --run-dir "$run_dir" \
     --origin "$origin" \
@@ -168,4 +232,13 @@ if ! printf '%s\n' "$status_output" | grep -q '^status: running$'; then
   "$ASSIST_HELPER" stop --run-dir "$run_dir" >/dev/null
 fi
 
-printf 'route: %s reason: %s needs_browser: %s\n' "$route" "$reason" "$needs_browser"
+emit_result \
+  "$route" \
+  "$reason" \
+  "$needs_browser" \
+  "$origin" \
+  "$run_dir" \
+  "$profile_dir" \
+  "$runtime_status" \
+  "$assisted_session" \
+  "$lan_novnc_url"

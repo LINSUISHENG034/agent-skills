@@ -20,14 +20,25 @@ def load_cdp_module():
 
 cdp = load_cdp_module()
 
+HELP_EPILOG = """Examples:
+  host-page-ops.py --check page-info
+  host-page-ops.py --navigate "https://example.com" --wait-navigation
+  host-page-ops.py --click-link-text "Pricing"
+
+Shell invocation:
+  Pass flags in the same command invocation.
+  Quote URLs, selectors, and JS expressions.
+  Splitting --wait-navigation onto its own shell line turns it into a separate shell command.
+"""
+
 
 def open_session(port: int, target_id: str | None):
     websocket = cdp.resolve_websocket_url(port, target_id)
     return cdp.CdpSession(websocket)
 
 
-def run_eval(port: int, target_id: str | None, expression: str) -> None:
-    result = cdp.evaluate(port, target_id, expression)
+def run_eval(port: int, target_id: str | None, expression: str, retry_count: int, retry_delay_ms: int) -> None:
+    result = cdp.evaluate(port, target_id, expression, retry_count=retry_count, retry_delay_ms=retry_delay_ms)
     print(json.dumps(result, ensure_ascii=False))
 
 
@@ -36,8 +47,8 @@ def run_navigate(port: int, target_id: str | None, url: str, wait_selector: str 
     print(json.dumps(result, ensure_ascii=False))
 
 
-def run_check(port: int, target_id: str | None, mode: str) -> None:
-    page_info = cdp.gather_page_info(port, target_id)
+def run_check(port: int, target_id: str | None, mode: str, retry_count: int, retry_delay_ms: int) -> None:
+    page_info = cdp.gather_page_info(port, target_id, retry_count=retry_count, retry_delay_ms=retry_delay_ms)
     if mode == "page-info":
         payload = {
             "title": page_info.get("title", ""),
@@ -128,13 +139,19 @@ def run_set_files(port: int, target_id: str | None, selector: str, files: list[s
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Host page CDP helper")
+    parser = argparse.ArgumentParser(
+        description="Host page CDP helper",
+        epilog=HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--port", type=int, default=9222)
     parser.add_argument("--target-id")
     parser.add_argument("--eval")
     parser.add_argument("--navigate")
     parser.add_argument("--wait-navigation", action="store_true")
     parser.add_argument("--wait-for")
+    parser.add_argument("--retry", type=int, default=0, help="retry --eval and --check flows up to N extra attempts")
+    parser.add_argument("--retry-delay-ms", type=int, default=250, help="delay between retries for --eval and --check")
     parser.add_argument("--click")
     parser.add_argument("--click-link-text")
     parser.add_argument("--click-at")
@@ -146,12 +163,16 @@ def main() -> int:
 
     port = args.port
     target_id = args.target_id
+    if args.retry < 0:
+        parser.error("--retry must be non-negative")
+    if args.retry_delay_ms < 0:
+        parser.error("--retry-delay-ms must be non-negative")
 
     if args.navigate:
         run_navigate(port, target_id, args.navigate, args.wait_for, args.wait_navigation)
         return 0
     if args.eval:
-        run_eval(port, target_id, args.eval)
+        run_eval(port, target_id, args.eval, args.retry, args.retry_delay_ms)
         return 0
     if args.click:
         run_click(port, target_id, args.click)
@@ -172,7 +193,7 @@ def main() -> int:
         run_scroll(port, target_id, args.scroll)
         return 0
     if args.check:
-        run_check(port, target_id, args.check)
+        run_check(port, target_id, args.check, args.retry, args.retry_delay_ms)
         return 0
 
     parser.print_help()

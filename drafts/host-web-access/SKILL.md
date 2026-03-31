@@ -14,15 +14,24 @@ Use this draft when the agent needs public research plus the ability to escalate
 `open-host-page.sh` is the canonical entry point. It:
 
 - routes the request via `route-web-task.sh` so lightweight search/fetch take the default path for public content
-- honors `--task-mode` and `--expected-action` to document the intent and verify the router matches expectations
+- honors `--task-mode` and `--expected-action` to document caller intent and assert the normalized route before browser orchestration starts
 - resolves the durable profile via `profile-resolution.sh` before browser start
 - starts the host browser runtime only when the router returns `route: "browser"`
 - uses local `host-page-ops.py` and `host-page-snapshot.py` helpers instead of importing `ubuntu-browser-session`
 - always runs `cleanup-host-runtime.sh` so browser, Xvfb, x11vnc, and websockify PIDs are released after every task
+- emits machine-readable JSON: all paths include `route`, `reason`, `needs_browser`, and `origin`; browser paths add `run_dir`, `profile_dir`, and `runtime_status`; assisted recovery additionally includes `assisted_session` and `lan_novnc_url`
 
 ## Routing Philosophy
 
 Start with `WebSearch`, `WebFetch`, `curl`, or `Jina` for public requests. Escalate to the host browser only when `route-web-task.sh` emits `route: "browser"` with reasons such as `protected-site`, `dynamic-rendering`, `interaction-required`, `login-required`, or `host-browser-requested`. The JSON result includes `needs_browser` so downstream steps can log why the heavier runtime was required.
+
+## Route Contract
+
+- `task-mode` expresses caller intent such as `latest`, `article`, `interactive`, or `host-browser`
+- `route` is the normalized router decision: `search`, `fetch`, or `browser`
+- `reason` keeps the specific classification that explains why the route was chosen
+- `--expected-action` asserts the normalized route returned by the router; it does not assert that browser startup or assisted recovery succeeded
+- Route assertion failures happen before browser orchestration starts, so a mismatch never launches the runtime
 
 ## Assisted LAN Flow
 
@@ -31,6 +40,15 @@ The assisted path exposes a single fixed LAN `lan_novnc_url` on port `6084` by d
 ## Cleanup Guarantees
 
 Cleanup scripts stop browser, Xvfb, x11vnc, and websockify PIDs when present, remove temporary runtime directories, and rewrite the runtime state to `STATE=closed` while leaving persistent profile data untouched.
+
+## Page Helper Usage
+
+- Inspect current page state: `host-page-ops.py --check page-info`
+- Navigate and wait for load completion: `host-page-ops.py --navigate "https://example.com" --wait-navigation`
+- Click a visible link by text: `host-page-ops.py --click-link-text "Pricing"`
+- Capture a markdown snapshot: `host-page-snapshot.py --format markdown`
+- For dynamic pages, `host-page-ops.py` also supports `--retry N --retry-delay-ms MS` on `--eval` and `--check` flows
+- Pass all flags in the same shell command invocation, and quote URLs, selectors, and JS expressions so the shell does not split them incorrectly
 
 ## Use Cases
 

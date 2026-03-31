@@ -58,6 +58,25 @@ missing_status=$?
 set -e
 [ "$missing_status" -ne 0 ]
 
+set +e
+loopback_output="$(
+  AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_X11VNC_BIN="$TMP_DIR/process-stub.sh" \
+  AGENT_BROWSER_WEBSOCKIFY_BIN="$TMP_DIR/process-stub.sh" \
+  AGENT_BROWSER_NOVNC_WEB_ROOT="$TMP_DIR/novnc-root" \
+  AGENT_BROWSER_NOVNC_PUBLIC_HOST="127.0.0.1" \
+    "$BASE_DIR/assist-lan-session.sh" start \
+      --run-dir "$TMP_DIR/assist-loopback" \
+      --origin "https://example.com" \
+      --session-key default \
+      --profile-dir "$profile_dir" \
+      --manifest-root "$manifest_root" 2>&1
+)"
+loopback_status=$?
+set -e
+[ "$loopback_status" -ne 0 ]
+printf '%s\n' "$loopback_output" | grep -q 'AGENT_BROWSER_NOVNC_PUBLIC_HOST'
+
 AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
 AGENT_BROWSER_X11VNC_BIN="$TMP_DIR/process-stub.sh" \
 AGENT_BROWSER_WEBSOCKIFY_BIN="$TMP_DIR/process-stub.sh" \

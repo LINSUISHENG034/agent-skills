@@ -12,10 +12,12 @@ import struct
 import time
 import urllib.parse
 import urllib.request
+from typing import Callable
 
 TIMEOUT_SECONDS = 5
 NAVIGATE_TIMEOUT_SECONDS = 15
 WAIT_FOR_TIMEOUT_SECONDS = 10
+PAGE_READY_TIMEOUT_SECONDS = 2
 USER_AGENT = "host-web-access/cdp"
 
 
@@ -32,7 +34,7 @@ def http_get_json(url: str) -> object:
 def resolve_websocket_url(port: int, target_id: str | None) -> str:
     targets = http_get_json(f"http://127.0.0.1:{port}/json/list")
     if not isinstance(targets, list):
-      raise CdpError("invalid target list response")
+        raise CdpError("invalid target list response")
 
     page_targets = [target for target in targets if target.get("type") == "page"]
     if target_id:
@@ -109,6 +111,26 @@ def read_frame(sock: socket.socket) -> str:
     if opcode != 0x1:
         raise CdpError(f"unsupported websocket opcode: {opcode}")
     return payload.decode("utf-8")
+
+
+def retry_cdp_call(attempt: Callable[[], object], retry_count: int, retry_delay_ms: int) -> object:
+    if retry_count < 0:
+        raise CdpError("retry_count must be non-negative")
+    if retry_delay_ms < 0:
+        raise CdpError("retry_delay_ms must be non-negative")
+
+    last_error: CdpError | None = None
+    for index in range(retry_count + 1):
+        try:
+            return attempt()
+        except CdpError as exc:
+            last_error = exc
+            if index >= retry_count:
+                break
+            time.sleep(retry_delay_ms / 1000)
+    if last_error is None:
+        raise CdpError("retry loop exited without result")
+    raise last_error
 
 
 class CdpSession:
@@ -194,16 +216,14 @@ class CdpSession:
             self._sock.settimeout(original_timeout)
 
 
-def evaluate(port: int, target_id: str | None, expression: str) -> object:
-    websocket_url = resolve_websocket_url(port, target_id)
-    with CdpSession(websocket_url) as session:
-        response = session.call(
-            "Runtime.evaluate",
-            {
-                "expression": expression,
-                "returnByValue": True,
-            },
-        )
+def _runtime_evaluate(session: CdpSession, expression: str) -> object:
+    response = session.call(
+        "Runtime.evaluate",
+        {
+            "expression": expression,
+            "returnByValue": True,
+        },
+    )
     result = response.get("result", {})
     if "exceptionDetails" in result:
         details = result["exceptionDetails"]
@@ -213,7 +233,61 @@ def evaluate(port: int, target_id: str | None, expression: str) -> object:
     return payload.get("value") if "value" in payload else payload
 
 
-def gather_page_info(port: int, target_id: str | None) -> dict[str, object]:
+def wait_for_page_ready(session: CdpSession, timeout: float = PAGE_READY_TIMEOUT_SECONDS) -> None:
+    expression = """(() => ({
+      readyState: document.readyState || '',
+      hasBody: !!document.body,
+      bodyTextLength: document.body ? (document.body.innerText || '').trim().length : 0,
+      childCount: document.body ? document.body.children.length : 0
+    }))()"""
+    deadline = time.monotonic() + timeout
+    while True:
+        state = _runtime_evaluate(session, expression)
+        if isinstance(state, dict):
+            ready_state = str(state.get("readyState", ""))
+            has_body = bool(state.get("hasBody"))
+            body_text_length = int(state.get("bodyTextLength", 0) or 0)
+            child_count = int(state.get("childCount", 0) or 0)
+            if ready_state in {"interactive", "complete"} and has_body and (body_text_length > 0 or child_count > 0):
+                return
+        if time.monotonic() >= deadline:
+            raise CdpError("timeout waiting for page readiness")
+        time.sleep(0.2)
+
+
+def _evaluate_expression(
+    port: int,
+    target_id: str | None,
+    expression: str,
+    wait_for_ready: bool,
+) -> object:
+    websocket_url = resolve_websocket_url(port, target_id)
+    with CdpSession(websocket_url) as session:
+        if wait_for_ready:
+            wait_for_page_ready(session)
+        return _runtime_evaluate(session, expression)
+
+
+def evaluate(
+    port: int,
+    target_id: str | None,
+    expression: str,
+    retry_count: int = 0,
+    retry_delay_ms: int = 250,
+) -> object:
+    return retry_cdp_call(
+        lambda: _evaluate_expression(port, target_id, expression, wait_for_ready=retry_count > 0),
+        retry_count,
+        retry_delay_ms,
+    )
+
+
+def gather_page_info(
+    port: int,
+    target_id: str | None,
+    retry_count: int = 0,
+    retry_delay_ms: int = 250,
+) -> dict[str, object]:
     expression = """(() => {
       const title = document.title || '';
       const url = location.href || '';
@@ -226,10 +300,22 @@ def gather_page_info(port: int, target_id: str | None) -> dict[str, object]:
         htmlSnippet: html.slice(0, 4000)
       };
     })()"""
-    value = evaluate(port, target_id, expression)
-    if not isinstance(value, dict):
+
+    def attempt() -> dict[str, object]:
+        value = _evaluate_expression(port, target_id, expression, wait_for_ready=retry_count > 0)
+        if not isinstance(value, dict):
+            raise CdpError("page-info did not return an object")
+        if retry_count > 0:
+            if not str(value.get("url", "")).strip():
+                raise CdpError("page-info not ready yet: missing URL")
+            if not any(str(value.get(field, "")).strip() for field in ("title", "bodySnippet", "htmlSnippet")):
+                raise CdpError("page-info not ready yet: empty page content")
+        return value
+
+    result = retry_cdp_call(attempt, retry_count, retry_delay_ms)
+    if not isinstance(result, dict):
         raise CdpError("page-info did not return an object")
-    return value
+    return result
 
 
 def detect_challenge(page_info: dict[str, object]) -> dict[str, object]:

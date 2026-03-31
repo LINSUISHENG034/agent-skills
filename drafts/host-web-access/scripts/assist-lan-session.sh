@@ -217,9 +217,9 @@ start_assisted() {
   require_arg browser_pid "$BROWSER_PID"
 
   LAN_HOST="${AGENT_BROWSER_NOVNC_PUBLIC_HOST:-$(primary_ipv4 || true)}"
-  [ -n "$LAN_HOST" ] || die "unable to determine LAN host for noVNC"
+  [ -n "$LAN_HOST" ] || die "unable to determine LAN host for noVNC; set AGENT_BROWSER_NOVNC_PUBLIC_HOST to a LAN-reachable host or IP explicitly"
   if [ "$LAN_HOST" = "127.0.0.1" ] || [ "$LAN_HOST" = "localhost" ]; then
-    die "refusing to expose assisted session on loopback; set a LAN host explicitly"
+    die "refusing to expose assisted session on loopback; set AGENT_BROWSER_NOVNC_PUBLIC_HOST to a LAN-reachable host or IP explicitly in constrained or container environments"
   fi
   LAN_URL="$(lan_novnc_url "$LAN_HOST" "$NOVNC_PORT")"
 
