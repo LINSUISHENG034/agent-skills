@@ -148,16 +148,54 @@ FORMAT_JS = {
           const childrenWithAnchors = Array.from(parent.children || []).filter((child) => child.querySelector('a[href]'));
           if (childrenWithAnchors.length < 2) continue;
 
-          const groups = new Map();
+          const groups = [];
+          const areClassSetsCompatible = (leftClasses, rightClasses) => {
+            if (!leftClasses.size && !rightClasses.size) return true;
+            for (const className of leftClasses) {
+              if (rightClasses.has(className)) return true;
+            }
+            let leftSubset = true;
+            for (const className of leftClasses) {
+              if (!rightClasses.has(className)) {
+                leftSubset = false;
+                break;
+              }
+            }
+            if (leftSubset) return true;
+            for (const className of rightClasses) {
+              if (!leftClasses.has(className)) return false;
+            }
+            return true;
+          };
+
           for (const child of childrenWithAnchors) {
-            const classKey = Array.from(child.classList || []).sort().join('.');
-            const key = `${child.tagName}|${classKey}`;
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key).push(child);
+            const childInfo = {
+              node: child,
+              tagName: child.tagName,
+              classSet: new Set(Array.from(child.classList || []).map((name) => (name || '').toLowerCase()).filter(Boolean))
+            };
+            let matchedGroup = null;
+            for (const group of groups) {
+              if (group.tagName !== childInfo.tagName) continue;
+              if (!areClassSetsCompatible(group.classUnion, childInfo.classSet)) continue;
+              matchedGroup = group;
+              break;
+            }
+            if (!matchedGroup) {
+              matchedGroup = {
+                tagName: childInfo.tagName,
+                classUnion: new Set(childInfo.classSet),
+                members: []
+              };
+              groups.push(matchedGroup);
+            } else {
+              for (const className of childInfo.classSet) matchedGroup.classUnion.add(className);
+            }
+            matchedGroup.members.push(childInfo.node);
           }
-          for (const group of groups.values()) {
-            if (group.length < 2) continue;
-            for (const container of group) {
+          for (const group of groups) {
+            if (group.members.length < 2) continue;
+            for (const container of group.members) {
               if (repeatedContainerSet.has(container)) continue;
               repeatedContainerSet.add(container);
               repeatedContainers.push(container);

@@ -238,4 +238,33 @@ case_four_hrefs = [item.get("href") for item in case_four_results]
 assert "https://forum.example.com/t/nested-one" in case_four_hrefs, case_four_results
 assert "https://forum.example.com/t/nested-two" in case_four_hrefs, case_four_results
 assert "https://forum.example.com/page/2" not in case_four_hrefs, case_four_results
+
+# Case 5: modifier class variance should still count as repeated result containers.
+case_five_html = """
+<!doctype html>
+<html>
+  <body>
+    <main>
+      <ul>
+        <li class="result featured">
+          <a href="https://forum.example.com/u/featured-author">featured-author</a>
+          <h2><a class="topic title" href="https://forum.example.com/t/featured-topic">Featured topic</a></h2>
+        </li>
+        <li class="result">
+          <a href="https://forum.example.com/u/normal-author">normal-author</a>
+          <h2><a class="topic title" href="https://forum.example.com/t/normal-topic">Normal topic</a></h2>
+        </li>
+      </ul>
+      <nav><a href="https://forum.example.com/page/3">Page 3</a></nav>
+    </main>
+  </body>
+</html>
+"""
+case_five_results = run_topic_links_snapshot(case_five_html, script_dir)
+case_five_hrefs = [item.get("href") for item in case_five_results]
+assert "https://forum.example.com/t/featured-topic" in case_five_hrefs, case_five_results
+assert "https://forum.example.com/t/normal-topic" in case_five_hrefs, case_five_results
+assert "https://forum.example.com/u/featured-author" not in case_five_hrefs, case_five_results
+assert "https://forum.example.com/u/normal-author" not in case_five_hrefs, case_five_results
+assert "https://forum.example.com/page/3" not in case_five_hrefs, case_five_results
 PY
