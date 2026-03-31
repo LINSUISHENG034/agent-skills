@@ -7,6 +7,8 @@
 - Profile resolution prefers site registry, then manifest, then identity/legacy/scoped fallbacks
 - Browser runtime reports `missing` before first start, `stopped` for stale metadata, `running` for live Chrome, and `closed` after cleanup
 - Browser runtime start requires a real browser command line and persists `cdp_host: 127.0.0.1`
+- Browser runtime restores runtime reuse primitives: `select-target` ranks page targets from `/json/list`, `check-page` supports `challenge|login-wall|page-info`, and `verify` fails stale browser/target manifests cleanly
+- Browser runtime clears stale Chromium singleton locks before launch while preserving live locks, and auto-selects free CDP/display values when callers leave them unspecified
 - Verify wrong-page recovery before user takeover so assisted sessions begin from the expected account page
 - Validate LAN-only assisted handoff by asserting only `lan_novnc_url` is exposed in operator-facing recovery output
 - Confirm browser-route continuity on protected tasks from initial route classification through post-recovery continuation
