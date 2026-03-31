@@ -217,6 +217,14 @@ off_origin_target="$(
 )"
 [ -z "$off_origin_target" ]
 
+spoofed_origin_target="$(
+  "$BASE_DIR/browser-runtime.sh" select-target \
+    --origin "https://example.com" \
+    --target-url "https://example.com/account" \
+    --targets-json '[{"id":"page-spoof","type":"page","url":"https://example.com.evil/account"}]'
+)"
+[ -z "$spoofed_origin_target" ]
+
 challenge_output="$(AGENT_BROWSER_CDP_EVAL="$TMP_DIR/cdp-stub.py" \
   "$BASE_DIR/browser-runtime.sh" check-page --run-dir "$TMP_DIR/task-run" --cdp-port "$runtime_port" --target-id TARGET_ID --check challenge)"
 printf '%s\n' "$challenge_output" | grep -q '"hasChallenge": true'

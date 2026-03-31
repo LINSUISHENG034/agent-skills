@@ -311,17 +311,26 @@ from urllib.parse import urlparse
 origin, target_url, payload = sys.argv[1:]
 targets = [target for target in json.loads(payload or "[]") if target.get("type") == "page"]
 
+def normalized_origin(value: str) -> str:
+    parsed = urlparse(value or "")
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
 def host(value: str) -> str:
-    parsed = urlparse(value)
-    return parsed.netloc
+    parsed = urlparse(value or "")
+    return parsed.netloc.lower()
+
+origin_norm = normalized_origin(origin)
 
 def score(target):
     url = target.get("url", "")
+    url_origin_norm = normalized_origin(url)
     if target_url and url == target_url:
         return (0, url)
-    if origin and url.startswith(origin):
+    if origin_norm and url_origin_norm == origin_norm:
         return (1, url)
-    if origin and host(url) and host(url) == host(origin):
+    if origin_norm and host(url) and host(url) == host(origin_norm):
         return (2, url)
     return (9, url)
 
