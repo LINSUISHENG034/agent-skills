@@ -30,10 +30,16 @@ stop_pid_file() {
   local pid
   pid="$(read_pid_file "$file")"
   if pid_running "$pid"; then
-    kill -TERM "$pid" 2>/dev/null || true
-    sleep 1
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    local attempt
+    for attempt in 1 2 3 4 5; do
+      if ! pid_running "$pid"; then
+        break
+      fi
+      sleep 1
+    done
     if pid_running "$pid"; then
-      kill -KILL "$pid" 2>/dev/null || true
+      kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
     fi
   fi
   rm -f "$file"
@@ -49,11 +55,12 @@ write_closed_state() {
     awk '
       BEGIN { wrote=0 }
       /^STATE=/ { print "STATE=closed"; wrote=1; next }
+      /^BROWSER_PID=/ { print "BROWSER_PID="; next }
       { print }
       END { if (!wrote) print "STATE=closed" }
     ' "$state_file" >"$tmp_file"
   else
-    printf 'STATE=closed\nRUN_DIR=%q\n' "$run_dir" >"$tmp_file"
+    printf 'STATE=closed\nRUN_DIR=%q\nBROWSER_PID=\n' "$run_dir" >"$tmp_file"
   fi
 
   mv "$tmp_file" "$state_file"
