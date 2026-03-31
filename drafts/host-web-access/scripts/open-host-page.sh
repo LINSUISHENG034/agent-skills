@@ -313,7 +313,6 @@ lan_novnc_url=""
 PRESERVE_RUNTIME_ON_EXIT="false"
 case "$page_status" in
   challenge|login-wall|target-mismatch)
-    PRESERVE_RUNTIME_ON_EXIT="true"
     assist_output="$("$ASSIST_HELPER" start \
       --run-dir "$run_dir" \
       --origin "$origin" \
@@ -322,7 +321,9 @@ case "$page_status" in
       --profile-dir "$profile_dir" \
       --manifest-root "$manifest_root")"
     lan_novnc_url="$(status_field lan_novnc_url "$assist_output")"
+    [ -n "$lan_novnc_url" ] || die "assisted handoff missing lan_novnc_url"
     assisted_session="true"
+    PRESERVE_RUNTIME_ON_EXIT="true"
     ;;
   *)
     ;;

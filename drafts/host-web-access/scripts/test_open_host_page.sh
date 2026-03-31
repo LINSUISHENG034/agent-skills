@@ -178,6 +178,10 @@ LOG="${LOG_FILE}"
 echo "assist:$*" >>"$LOG"
 case "${1:-}" in
   start)
+    if [ "${ASSIST_START_FAIL:-false}" = "true" ]; then
+      echo "assisted start failed" >&2
+      exit 41
+    fi
     printf 'lan_novnc_url: %s\n' "${ASSIST_LAN_URL_RESPONSE:-http://192.168.1.44:6084/vnc.html?autoconnect=1&resize=remote}"
     ;;
   capture)
@@ -538,6 +542,41 @@ run_wrong_page_recovery_assisted() {
   ! grep -q '^cleanup:' "$tmp/actions.log"
 }
 
+run_assist_start_failure_cleans_up() {
+  local tmp="$1"
+  local output status
+  setup_stubs "$tmp"
+  set +e
+  output="$(
+    LOG_FILE="$tmp/actions.log" \
+    PROFILE_DIR_RESPONSE="$tmp/resolved-profile" \
+    RUNTIME_STATUS_RESPONSE=running \
+    VERIFY_BEHAVIOR=success \
+    SELECT_TARGET_SEQUENCE=page-login \
+    PAGE_STATUS_RESPONSE=challenge \
+    ASSIST_START_FAIL=true \
+    RUNTIME_STATE_DIR="$tmp/runtime-state" \
+    HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
+    HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
+    HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
+    HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
+    HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
+      bash "$BASE_DIR/open-host-page.sh" \
+      --url "https://protected.example/dashboard" \
+      --task-mode interactive \
+      --expected-action browser \
+      --run-dir "$tmp/assist-fail-run" 2>&1
+  )"
+  status=$?
+  set -e
+
+  [ "$status" -ne 0 ]
+  printf '%s\n' "$output" | grep -q 'assisted start failed'
+  grep -q '^assist:start ' "$tmp/actions.log"
+  grep -q '^cleanup:--run-dir ' "$tmp/actions.log"
+}
+
 run_expected_failure() {
   set +e
   bash "$BASE_DIR/open-host-page.sh" >/dev/null 2>&1
@@ -557,3 +596,4 @@ run_assist_path_challenge "$TMP_DIR/assist-challenge"
 run_assist_path_login_wall "$TMP_DIR/assist-login-wall"
 run_wrong_page_recovery_success "$TMP_DIR/recovery-success"
 run_wrong_page_recovery_assisted "$TMP_DIR/recovery-assist"
+run_assist_start_failure_cleans_up "$TMP_DIR/assist-start-failure"
