@@ -27,6 +27,9 @@ dist/
 /drafts/*
 !/drafts/.gitkeep
 
+# Completed but non-redistributable skills kept locally in the workspace
+/restricted/
+
 # Local third-party skill sources and copied references
 /third_party/*
 !/third_party/README.md

@@ -12,6 +12,7 @@ Each skill lives in its own directory and typically contains:
 - optional UI metadata such as `agents/openai.yaml`
 
 Published skills live at the repository root. Unfinished skills stay under `drafts/` and are ignored by git until they are ready to be promoted.
+Completed but non-redistributable skills stay under `restricted/` and are also ignored by the main repository.
 Maintainer-facing reference material lives under `docs/`.
 Local-only third-party skill sources live under `third_party/`.
 
@@ -65,6 +66,26 @@ Promotion rule:
 - Draft history stays in the local `drafts/` repository.
 - Publishable history stays in the main repository only after promotion to the repository root.
 
+## Restricted Skills
+
+Restricted skills are kept under `restricted/` and are intentionally excluded from the main repository history.
+
+- Use `restricted/` for skills that are complete for local use but cannot be promoted to the repository root because redistribution or license terms do not permit publication here.
+- Keep `restricted/` as a separate local-only Git repository and use `git -C restricted ...` for its commits, diffs, branches, and logs.
+- Do not move a restricted skill into the repository root unless its redistribution status is resolved and the skill is publishable.
+- Do not treat `restricted/` as a second draft area. Incomplete or still-evolving work belongs in `drafts/`; completed but non-publishable work belongs in `restricted/`.
+
+Typical local workflow:
+
+```bash
+# Inspect restricted changes
+git -C restricted status --short
+
+# Commit only inside the local restricted repository
+git -C restricted add <paths>
+git -C restricted commit -m "restricted: ..."
+```
+
 ## Documentation
 
 Use `docs/` for maintainer references, authoring notes, and example material that should not be confused with publishable skills.
@@ -102,6 +123,7 @@ Before pushing publicly, keep this repository limited to material that can be sa
 - Publish skills, helper scripts, and maintainer-written documentation
 - Keep secrets, local runtimes, private keys, and environment files untracked
 - Keep unfinished skills under `drafts/`
+- Keep completed but non-redistributable skills under `restricted/`
 - Keep third-party reference documents untracked unless redistribution rights are clear
 - Prefer README notes that explain an external reference over committing the full source document
 
@@ -153,4 +175,5 @@ If a skill needs local credentials or runtime state, keep them beside the skill 
 - Keep boundaries explicit. Avoid duplicating the same workflow in multiple skills.
 - When one local skill depends on an external companion skill, document the handoff in the local skill and in this repository README.
 - Prefer portable placeholders or local configuration files over hardcoded secrets.
-- Use `drafts/` instead of ad hoc `.gitignore` entries when a whole skill is not ready for release.
+- Use `drafts/` when a whole skill is not ready for release.
+- Use `restricted/` when a whole skill is complete locally but cannot be published from this repository.

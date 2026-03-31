@@ -5,10 +5,12 @@ This repository is for publishable skills plus local-only development support fi
 ## Skill Development Scope
 
 - Build new or incomplete skills under `drafts/`.
+- Move complete but non-redistributable skills under `restricted/`.
 - Promote a skill to the repository root only when it is ready to publish.
 - Keep published root-level skills portable and redistributable.
 - Reuse existing scripts and references where practical instead of duplicating workflows across skills.
 - Treat `drafts/` as a separate local-only Git repository for draft commits, branches, and worktrees.
+- Treat `restricted/` as a separate local-only Git repository for completed but non-publishable skills.
 
 ## Skill Authoring Principles
 
@@ -48,9 +50,11 @@ Rules:
 - Keep commits focused on publishable skill changes, scripts, and repository documentation that is meant to ship.
 - Use the main repository only for publishable root-level skills and tracked repository docs.
 - Use `git -C drafts ...` for draft-only history; do not try to commit draft skill contents in the main repository.
+- Use `git -C restricted ...` for completed-but-restricted history; do not try to commit restricted skill contents in the main repository.
 - Keep new draft worktrees under `drafts/.worktrees/` by running `git -C drafts worktree ...`; reserve the main repository `.worktrees/` for publishable repository work.
 - If a legacy main-repository worktree already lives under `drafts/.worktrees/`, do not reuse or extend it blindly; migrate it into the `drafts` repository first.
 - Do not add a default push remote to the local `drafts/` repository unless you explicitly intend to publish draft history somewhere else.
+- Do not add a default push remote to the local `restricted/` repository unless you explicitly intend to synchronize restricted history to a private location.
 
 ## Planning Workflow
 
@@ -72,6 +76,7 @@ Rules:
 Before push or publish:
 
 - verify that `docs/plans/` and `docs/issues/` are absent from staged changes
+- verify that `drafts/` and `restricted/` are absent from staged changes in the main repository
 - verify that new root-level skills are complete and publishable
 - verify that local secrets, runtime state, and host-specific notes remain untracked
 
