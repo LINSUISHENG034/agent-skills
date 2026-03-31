@@ -24,6 +24,7 @@ printf '%s\n' "$output" | grep -q -- 'links'
 python3 - "$BASE_DIR" <<'PY'
 import importlib.util
 import json
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -70,9 +71,16 @@ def run_topic_links_snapshot(html: str, script_dir: Path) -> list[dict]:
 
     port = reserve_port()
     profile_dir = tempfile.mkdtemp(prefix="host-page-snapshot-test-")
+    chrome_bin = None
+    for candidate in ("google-chrome", "chromium", "chromium-browser"):
+        if shutil.which(candidate):
+            chrome_bin = candidate
+            break
+    if chrome_bin is None:
+        raise RuntimeError("no supported Chrome/Chromium binary found")
     data_url = "data:text/html;charset=utf-8," + urllib.parse.quote(html)
     chrome_cmd = [
-        "google-chrome",
+        chrome_bin,
         "--headless=new",
         "--disable-gpu",
         "--no-first-run",
@@ -111,6 +119,7 @@ def run_topic_links_snapshot(html: str, script_dir: Path) -> list[dict]:
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             proc.kill()
+        shutil.rmtree(profile_dir, ignore_errors=True)
 
 
 script_dir = Path(sys.argv[1])
@@ -177,4 +186,56 @@ case_two_html = """
 case_two_results = run_topic_links_snapshot(case_two_html, script_dir)
 case_two_hrefs = [item.get("href") for item in case_two_results]
 assert case_two_hrefs == ["https://forum.example.com/questions/only-main-result"], case_two_results
+
+# Case 3: multiple sibling article cards should all be used as fallback roots.
+case_three_html = """
+<!doctype html>
+<html>
+  <body>
+    <article>
+      <h2><a href="https://forum.example.com/t/first-article-topic">First article topic</a></h2>
+    </article>
+    <article>
+      <h2><a href="https://forum.example.com/t/second-article-topic">Second article topic</a></h2>
+    </article>
+    <footer><a href="https://forum.example.com/site-map">Site map</a></footer>
+  </body>
+</html>
+"""
+case_three_results = run_topic_links_snapshot(case_three_html, script_dir)
+case_three_hrefs = [item.get("href") for item in case_three_results]
+assert "https://forum.example.com/t/first-article-topic" in case_three_hrefs, case_three_results
+assert "https://forum.example.com/t/second-article-topic" in case_three_hrefs, case_three_results
+assert "https://forum.example.com/site-map" not in case_three_hrefs, case_three_results
+
+# Case 4: nested repeated result containers should be detected (main > ul > li).
+case_four_html = """
+<!doctype html>
+<html>
+  <body>
+    <main>
+      <section class="results">
+        <ul>
+          <li>
+            <a href="https://forum.example.com/u/author-one">author-one</a>
+            <h2><a class="topic title" href="https://forum.example.com/t/nested-one">Nested one</a></h2>
+          </li>
+          <li>
+            <a href="https://forum.example.com/u/author-two">author-two</a>
+            <h2><a class="topic title" href="https://forum.example.com/t/nested-two">Nested two</a></h2>
+          </li>
+        </ul>
+      </section>
+      <nav>
+        <a href="https://forum.example.com/page/2">Next page</a>
+      </nav>
+    </main>
+  </body>
+</html>
+"""
+case_four_results = run_topic_links_snapshot(case_four_html, script_dir)
+case_four_hrefs = [item.get("href") for item in case_four_results]
+assert "https://forum.example.com/t/nested-one" in case_four_hrefs, case_four_results
+assert "https://forum.example.com/t/nested-two" in case_four_hrefs, case_four_results
+assert "https://forum.example.com/page/2" not in case_four_hrefs, case_four_results
 PY

@@ -96,8 +96,8 @@ FORMAT_JS = {
 
       const topicRoots = Array.from(new Set([
         document.querySelector('main'),
-        document.querySelector('article'),
-        document.querySelector('[role=main]')
+        document.querySelector('[role=main]'),
+        ...Array.from(document.querySelectorAll('article'))
       ].filter(Boolean)));
 
       const chooseAnchor = (anchors) => {
@@ -140,10 +140,29 @@ FORMAT_JS = {
       };
 
       const repeatedContainers = [];
+      const repeatedContainerSet = new Set();
       const repeatedRoots = topicRoots.length ? topicRoots : [document.body].filter(Boolean);
       for (const root of repeatedRoots) {
-        for (const child of Array.from(root.children || [])) {
-          if (child.querySelector('a[href]')) repeatedContainers.push(child);
+        const parents = [root, ...Array.from(root.querySelectorAll('*'))];
+        for (const parent of parents) {
+          const childrenWithAnchors = Array.from(parent.children || []).filter((child) => child.querySelector('a[href]'));
+          if (childrenWithAnchors.length < 2) continue;
+
+          const groups = new Map();
+          for (const child of childrenWithAnchors) {
+            const classKey = Array.from(child.classList || []).sort().join('.');
+            const key = `${child.tagName}|${classKey}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(child);
+          }
+          for (const group of groups.values()) {
+            if (group.length < 2) continue;
+            for (const container of group) {
+              if (repeatedContainerSet.has(container)) continue;
+              repeatedContainerSet.add(container);
+              repeatedContainers.push(container);
+            }
+          }
         }
       }
       if (repeatedContainers.length >= 2) {
