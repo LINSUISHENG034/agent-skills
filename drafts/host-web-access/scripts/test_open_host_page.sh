@@ -180,6 +180,14 @@ case "${1:-}" in
   start)
     printf 'lan_novnc_url: %s\n' "${ASSIST_LAN_URL_RESPONSE:-http://192.168.1.44:6084/vnc.html?autoconnect=1&resize=remote}"
     ;;
+  capture)
+    echo "capture should not be called by open-host-page assisted handoff" >&2
+    exit 31
+    ;;
+  stop)
+    echo "stop should not be called by open-host-page assisted handoff" >&2
+    exit 32
+    ;;
 esac
 exit 0
 EOF
@@ -405,8 +413,9 @@ run_assist_path_challenge() {
   assert_json_value "$output" assisted_session true
   assert_json_value "$output" lan_novnc_url "http://192.168.1.77:6084/vnc.html?autoconnect=1&resize=remote"
   grep -q '^assist:start ' "$tmp/actions.log"
-  grep -q '^assist:capture ' "$tmp/actions.log"
-  grep -q '^assist:stop ' "$tmp/actions.log"
+  grep -q '^assist:start .*--target-url https://protected.example/dashboard' "$tmp/actions.log"
+  ! grep -q '^assist:capture ' "$tmp/actions.log"
+  ! grep -q '^assist:stop ' "$tmp/actions.log"
 }
 
 run_assist_path_login_wall() {
@@ -443,8 +452,9 @@ run_assist_path_login_wall() {
   assert_json_value "$output" assisted_session true
   assert_json_value "$output" lan_novnc_url "http://192.168.1.55:6084/vnc.html?autoconnect=1&resize=remote"
   grep -q '^assist:start ' "$tmp/actions.log"
-  grep -q '^assist:capture ' "$tmp/actions.log"
-  grep -q '^assist:stop ' "$tmp/actions.log"
+  grep -q '^assist:start .*--target-url https://protected.example/dashboard' "$tmp/actions.log"
+  ! grep -q '^assist:capture ' "$tmp/actions.log"
+  ! grep -q '^assist:stop ' "$tmp/actions.log"
 }
 
 run_wrong_page_recovery_success() {
@@ -520,6 +530,9 @@ run_wrong_page_recovery_assisted() {
   assert_navigate_count "$tmp" 1
   grep -q '^page-ops:.*--navigate https://protected.example/dashboard' "$tmp/actions.log"
   grep -q '^assist:start ' "$tmp/actions.log"
+  grep -q '^assist:start .*--target-url https://protected.example/dashboard' "$tmp/actions.log"
+  ! grep -q '^assist:capture ' "$tmp/actions.log"
+  ! grep -q '^assist:stop ' "$tmp/actions.log"
 }
 
 run_expected_failure() {

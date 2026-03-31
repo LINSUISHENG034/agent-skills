@@ -102,6 +102,7 @@ AGENT_BROWSER_NOVNC_PUBLIC_HOST="192.168.1.44" \
   "$BASE_DIR/assist-lan-session.sh" start \
     --run-dir "$run_root" \
     --origin "https://github.com" \
+    --target-url "https://github.com/settings/profile" \
     --session-key default \
     --profile-dir "$profile_dir" \
     --manifest-root "$manifest_root" >/dev/null
@@ -111,6 +112,7 @@ AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
   "$BASE_DIR/assist-lan-session.sh" capture \
     --run-dir "$run_root" \
     --origin "https://github.com" \
+    --target-url "https://github.com/settings/profile" \
     --session-key default \
     --profile-dir "$profile_dir" \
     --manifest-root "$manifest_root" >/dev/null

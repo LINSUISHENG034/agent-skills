@@ -17,6 +17,8 @@ If identity state and live browser page drift, recover to the expected account p
 Assisted capture writes reusable metadata only after runtime verification confirms:
 - no active challenge
 - no login wall
-- final page URL still matches the requested origin/target
+- final page URL still matches the requested target URL when provided (otherwise same-origin requirement still applies)
 
 On successful assisted capture, manifest state is written at `--manifest-root`, while reusable identity/session metadata is written under the main skill root (`$HOME/.agent-browser/index/`), not under the override manifest root.
+
+`open-host-page.sh` does not auto-capture blocked assisted states. It returns the LAN handoff payload first so the operator can complete the required interaction before capture is attempted.

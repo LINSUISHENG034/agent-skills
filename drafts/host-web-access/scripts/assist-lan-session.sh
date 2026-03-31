@@ -20,6 +20,7 @@ Options:
   --profile-dir DIR
   --run-dir DIR
   --session-key KEY
+  --target-url URL
   --vnc-port PORT
 EOF
 }
@@ -125,6 +126,7 @@ write_state() {
 ORIGIN=$(printf '%q' "$ORIGIN")
 SESSION_KEY=$(printf '%q' "$SESSION_KEY")
 PROFILE_DIR=$(printf '%q' "$PROFILE_DIR")
+TARGET_URL=$(printf '%q' "$TARGET_URL")
 RUN_DIR=$(printf '%q' "$RUN_DIR")
 RUNTIME_RUN_DIR=$(printf '%q' "$RUNTIME_RUN_DIR")
 MANIFEST_ROOT=$(printf '%q' "$MANIFEST_ROOT")
@@ -215,14 +217,14 @@ write_identity_metadata() {
   done < <(identity_providers "$page_json")
 }
 
-page_matches_origin() {
+page_matches_target() {
   local page_json="$1"
-  python3 - "$page_json" "$ORIGIN" <<'PY'
+  python3 - "$page_json" "$TARGET_URL" "$ORIGIN" <<'PY'
 import json
 import sys
 from urllib.parse import urlparse, urlunparse
 
-page_payload, origin = sys.argv[1:]
+page_payload, target_url, origin = sys.argv[1:]
 
 try:
     page_url = (json.loads(page_payload or "{}").get("url") or "").strip()
@@ -251,8 +253,15 @@ def normalize(value: str) -> str:
     ))
 
 page = normalize(page_url)
+target_value = normalize(target_url)
 origin_value = normalize(origin)
-if not page or not origin_value:
+if not page:
+    raise SystemExit(1)
+
+if target_value:
+    raise SystemExit(0 if page == target_value else 1)
+
+if not origin_value:
     raise SystemExit(1)
 if page == origin_value or page.startswith(origin_value + "/"):
     raise SystemExit(0)
@@ -285,6 +294,7 @@ resolve_context() {
   MANIFEST_ROOT="${CLI_MANIFEST_ROOT:-${MANIFEST_ROOT:-$BASE_ROOT}}"
   SESSION_KEY="${CLI_SESSION_KEY:-${SESSION_KEY:-default}}"
   ORIGIN="${CLI_ORIGIN:-${ORIGIN:-}}"
+  TARGET_URL="${CLI_TARGET_URL:-${TARGET_URL:-}}"
   PROFILE_DIR="${CLI_PROFILE_DIR:-${PROFILE_DIR:-}}"
   NOVNC_PORT="${CLI_NOVNC_PORT:-${NOVNC_PORT:-${HOST_WEB_ACCESS_NOVNC_PORT:-6084}}}"
   VNC_PORT="${CLI_VNC_PORT:-${VNC_PORT:-${HOST_WEB_ACCESS_VNC_PORT:-5904}}}"
@@ -302,6 +312,7 @@ resolve_context() {
   MANIFEST_ROOT="${CLI_MANIFEST_ROOT:-${MANIFEST_ROOT:-$BASE_ROOT}}"
   SESSION_KEY="${CLI_SESSION_KEY:-${SESSION_KEY:-default}}"
   ORIGIN="${CLI_ORIGIN:-${ORIGIN:-$ORIGIN}}"
+  TARGET_URL="${CLI_TARGET_URL:-${TARGET_URL:-}}"
   PROFILE_DIR="${CLI_PROFILE_DIR:-${PROFILE_DIR:-$PROFILE_DIR}}"
   NOVNC_PORT="${CLI_NOVNC_PORT:-${NOVNC_PORT:-${HOST_WEB_ACCESS_NOVNC_PORT:-6084}}}"
   VNC_PORT="${CLI_VNC_PORT:-${VNC_PORT:-${HOST_WEB_ACCESS_VNC_PORT:-5904}}}"
@@ -357,7 +368,7 @@ status_assisted() {
 }
 
 capture_assisted() {
-  load_state
+  [ -f "$(state_file)" ] || die "no active assisted session"
   require_arg --origin "$ORIGIN"
   require_arg --session-key "$SESSION_KEY"
 
@@ -378,6 +389,7 @@ capture_assisted() {
   target_id="$(
     select_target_helper select-target \
       --origin "$ORIGIN" \
+      --target-url "$TARGET_URL" \
       --targets-json "$target_json"
   )"
   [ -n "$target_id" ] || die "no page target is available for capture"
@@ -413,7 +425,7 @@ capture_assisted() {
       --target-id "$target_id" \
       --check page-info
   )"
-  page_matches_origin "$page_json" || die "verification has not succeeded yet; browser is not on the requested origin page"
+  page_matches_target "$page_json" || die "verification has not succeeded yet; browser is not on the requested target page"
 
   manifest_helper write \
     --root "$MANIFEST_ROOT" \
@@ -461,6 +473,7 @@ CLI_NOVNC_PORT=""
 CLI_ORIGIN=""
 CLI_PROFILE_DIR=""
 CLI_SESSION_KEY=""
+CLI_TARGET_URL=""
 CLI_VNC_PORT=""
 
 while [ "$#" -gt 0 ]; do
@@ -479,6 +492,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --profile-dir)
       CLI_PROFILE_DIR="$2"
+      shift 2
+      ;;
+    --target-url)
+      CLI_TARGET_URL="$2"
       shift 2
       ;;
     --run-dir)

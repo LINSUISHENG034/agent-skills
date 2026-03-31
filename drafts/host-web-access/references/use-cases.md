@@ -12,8 +12,8 @@
 - Validate browser-route reuse: when a verified runtime is already available, `open-host-page.sh` reuses it and still verifies target-page correctness before reporting success
 - Validate browser-route target-state reporting: browser responses expose `page_status`, `target_id` (when available), and `recovery_attempted` so downstream tools can branch on `ready`, `challenge`, `login-wall`, and `target-mismatch`
 - Validate wrong-page handling: the browser path attempts one local recovery for target drift before escalating to assisted flow
-- Validate the integrated `open-host-page.sh` path: the router stays on lightweight search when `route: "search"`, launches the browser runtime only when the router reports `browser`, triggers the assisted LAN flow only for explicit blocked states or unrecovered target mismatch, and always runs cleanup
-- Confirm fixed-port LAN assisted recovery by starting a blocked session and verifying `assist-lan-session.sh` prints the single `lan_novnc_url` and updates the manifest/site registry
+- Validate the integrated `open-host-page.sh` path: the router stays on lightweight search when `route: "search"`, launches the browser runtime only when the router reports `browser`, and on blocked states returns assisted LAN handoff payload without premature assisted capture
+- Confirm fixed-port LAN assisted recovery by starting a blocked session and verifying `assist-lan-session.sh` prints only `lan_novnc_url`; verify manifest/site/identity metadata updates only after an explicit successful assisted capture
 - Capture page state quickly with `host-page-ops.py --check page-info` before deciding whether to click, scroll, or snapshot
 - Navigate with `host-page-ops.py --navigate "https://example.com" --wait-navigation` when the caller needs the next page to finish loading before further DOM operations
 - Use `host-page-ops.py --click-link-text "Pricing"` for generic visible-link navigation instead of site-specific selectors when text matching is sufficient

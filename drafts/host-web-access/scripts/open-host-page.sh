@@ -312,18 +312,12 @@ case "$page_status" in
     assist_output="$("$ASSIST_HELPER" start \
       --run-dir "$run_dir" \
       --origin "$origin" \
+      --target-url "$url" \
       --session-key "$session_key" \
       --profile-dir "$profile_dir" \
       --manifest-root "$manifest_root")"
     lan_novnc_url="$(status_field lan_novnc_url "$assist_output")"
     assisted_session="true"
-    "$ASSIST_HELPER" capture \
-      --run-dir "$run_dir" \
-      --origin "$origin" \
-      --session-key "$session_key" \
-      --profile-dir "$profile_dir" \
-      --manifest-root "$manifest_root" >/dev/null
-    "$ASSIST_HELPER" stop --run-dir "$run_dir" >/dev/null
     ;;
   *)
     ;;

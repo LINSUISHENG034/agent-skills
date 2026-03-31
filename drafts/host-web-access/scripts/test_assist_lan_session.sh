@@ -245,6 +245,25 @@ set -e
 printf '%s\n' "$off_origin_output" | grep -q 'requested'
 test ! -d "$manifest_root/sessions"
 
+set +e
+wrong_target_output="$(
+  RUNTIME_STUB_PAGE_URL='https://example.com/settings' \
+  AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
+  "$BASE_DIR/assist-lan-session.sh" capture \
+    --run-dir "$run_root" \
+    --origin "https://example.com" \
+    --target-url "https://example.com/protected" \
+    --session-key default \
+    --profile-dir "$profile_dir" \
+    --manifest-root "$manifest_root" 2>&1
+)"
+wrong_target_status=$?
+set -e
+[ "$wrong_target_status" -ne 0 ]
+printf '%s\n' "$wrong_target_output" | grep -q 'requested target page'
+test ! -d "$manifest_root/sessions"
+
 RUNTIME_STUB_PAGE_URL='https://example.com/protected' \
 RUNTIME_STUB_PAGE_TITLE='Example Protected' \
 RUNTIME_STUB_PAGE_BODY='ready' \
@@ -256,6 +275,7 @@ AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
   "$BASE_DIR/assist-lan-session.sh" capture \
     --run-dir "$run_root" \
     --origin "https://example.com" \
+    --target-url "https://example.com/protected" \
     --session-key default \
     --profile-dir "$profile_dir" \
     --manifest-root "$manifest_root" >/dev/null
