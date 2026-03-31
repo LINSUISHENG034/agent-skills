@@ -6,8 +6,7 @@ SKILL_DOC="$ROOT_DIR/SKILL.md"
 IDENTITY_POLICY_DOC="$ROOT_DIR/references/identity-session-policy.md"
 USE_CASES_DOC="$ROOT_DIR/references/use-cases.md"
 TEST_MATRIX_DOC="$ROOT_DIR/references/testing-matrix.md"
-ASSISTED_LAN_FLOW_DOC="$ROOT_DIR/references/assisted-lan-flow.md"
-VALIDATION_FINDINGS_DOC="$ROOT_DIR/references/validation-findings.md"
+REFERENCES_DIR="$ROOT_DIR/references"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -45,12 +44,11 @@ assert_contains "$TEST_MATRIX_DOC" "browser-route continuity on protected tasks"
 
 PUBLIC_SCOPE_DOCS=(
   "$SKILL_DOC"
-  "$IDENTITY_POLICY_DOC"
-  "$USE_CASES_DOC"
-  "$TEST_MATRIX_DOC"
-  "$ASSISTED_LAN_FLOW_DOC"
-  "$VALIDATION_FINDINGS_DOC"
 )
+
+while IFS= read -r reference_doc; do
+  PUBLIC_SCOPE_DOCS+=("$reference_doc")
+done < <(find "$REFERENCES_DIR" -maxdepth 1 -type f -name "*.md" | sort)
 
 for public_doc in "${PUBLIC_SCOPE_DOCS[@]}"; do
   assert_not_contains "$public_doc" "\\bnovnc_url\\b" "public docs should not expose generic novnc_url"

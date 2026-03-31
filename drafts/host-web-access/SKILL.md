@@ -43,7 +43,9 @@ The assisted path exposes a single fixed LAN `lan_novnc_url` on port `6084` by d
 
 Protected-site browser work stays in the host-browser workflow by default. The normal workflow does not hand protected tasks to a fetch-only path once browser routing is required.
 
-Identity governance defaults to one primary identity per canonical site. Secondary identities are opt-in and must be selected explicitly with `--session-key`; the skill does not auto-select between multiple identities.
+Successor policy: one primary identity per canonical site. Secondary identities are opt-in and must be selected explicitly with `--session-key`; the skill does not auto-select between multiple identities.
+
+This section defines the required public contract for successor behavior. Runtime enforcement coverage is being completed incrementally; when enforcement and policy diverge, follow this policy in operator and caller workflows.
 
 ## Cleanup Guarantees
 
