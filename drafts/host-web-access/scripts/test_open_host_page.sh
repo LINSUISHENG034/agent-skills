@@ -383,6 +383,72 @@ run_browser_path() {
   ! grep -q '^assist:' "$tmp/actions.log"
 }
 
+run_verify_failure_reuses_running_runtime() {
+  local tmp="$1"
+  local output
+  setup_stubs "$tmp"
+  output="$(
+    LOG_FILE="$tmp/actions.log" \
+    PROFILE_DIR_RESPONSE="$tmp/resolved-profile" \
+    RUNTIME_STATUS_RESPONSE=running \
+    VERIFY_BEHAVIOR=fail \
+    SELECT_TARGET_SEQUENCE=page-dashboard \
+    PAGE_STATUS_RESPONSE=ready \
+    PAGE_INFO_URL_RESPONSE="https://protected.example/dashboard" \
+    RUNTIME_STATE_DIR="$tmp/runtime-state" \
+    HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
+    HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
+    HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
+    HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
+    HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
+      bash "$BASE_DIR/open-host-page.sh" \
+      --url "https://protected.example/dashboard" \
+      --task-mode interactive \
+      --expected-action browser \
+      --run-dir "$tmp/verify-fail-running"
+  )"
+
+  assert_json_value "$output" runtime_status running
+  assert_json_value "$output" page_status ready
+  assert_json_value "$output" recovery_attempted false
+  ! grep -q '^runtime:start ' "$tmp/actions.log"
+  ! grep -q '^assist:' "$tmp/actions.log"
+}
+
+run_normalized_target_url_is_ready() {
+  local tmp="$1"
+  local output
+  setup_stubs "$tmp"
+  output="$(
+    LOG_FILE="$tmp/actions.log" \
+    PROFILE_DIR_RESPONSE="$tmp/resolved-profile" \
+    RUNTIME_STATUS_RESPONSE=running \
+    VERIFY_BEHAVIOR=success \
+    SELECT_TARGET_SEQUENCE=page-dashboard \
+    PAGE_STATUS_RESPONSE=ready \
+    PAGE_INFO_URL_RESPONSE="https://protected.example/dashboard/" \
+    RUNTIME_STATE_DIR="$tmp/runtime-state" \
+    HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
+    HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
+    HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
+    HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
+    HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
+      bash "$BASE_DIR/open-host-page.sh" \
+      --url "https://protected.example/dashboard" \
+      --task-mode interactive \
+      --expected-action browser \
+      --run-dir "$tmp/normalized-ready-run"
+  )"
+
+  assert_json_value "$output" page_status ready
+  assert_json_value "$output" recovery_attempted false
+  assert_start_count "$tmp" 0
+  assert_navigate_count "$tmp" 0
+  ! grep -q '^assist:' "$tmp/actions.log"
+}
+
 run_assist_path_challenge() {
   local tmp="$1"
   local output
@@ -592,6 +658,8 @@ run_expected_failure
 run_lightweight "$TMP_DIR/light"
 run_expected_action_failure "$TMP_DIR/route-assert"
 run_browser_path "$TMP_DIR/browser"
+run_verify_failure_reuses_running_runtime "$TMP_DIR/verify-fail-running"
+run_normalized_target_url_is_ready "$TMP_DIR/normalized-ready"
 run_assist_path_challenge "$TMP_DIR/assist-challenge"
 run_assist_path_login_wall "$TMP_DIR/assist-login-wall"
 run_wrong_page_recovery_success "$TMP_DIR/recovery-success"

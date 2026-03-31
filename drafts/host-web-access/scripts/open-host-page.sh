@@ -64,6 +64,44 @@ elif value is not None:
 PY
 }
 
+urls_match_normalized() {
+  local current_url="$1"
+  local expected_url="$2"
+  python3 - "$current_url" "$expected_url" <<'PY'
+import sys
+from urllib.parse import urlparse, urlunparse
+
+current_raw, expected_raw = sys.argv[1:]
+
+def normalize(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return raw.rstrip("/")
+    path = parsed.path or ""
+    if path not in ("", "/"):
+        path = path.rstrip("/")
+    else:
+        path = ""
+    return urlunparse((
+        parsed.scheme.lower(),
+        parsed.netloc.lower(),
+        path,
+        parsed.params,
+        parsed.query,
+        "",
+    ))
+
+current_value = normalize(current_raw)
+expected_value = normalize(expected_raw)
+if current_value and expected_value and current_value == expected_value:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 emit_result() {
   python3 - "$@" <<'PY'
 import json
@@ -237,7 +275,16 @@ if "$BROWSER_RUNTIME_HELPER" verify \
   --session-key "$session_key" >/dev/null 2>&1; then
   runtime_reused="true"
 else
-  start_runtime
+  verify_status_output="$("$BROWSER_RUNTIME_HELPER" status \
+    --run-dir "$run_dir" \
+    --origin "$origin" \
+    --session-key "$session_key" 2>/dev/null || true)"
+  verify_runtime_status="$(status_field status "$verify_status_output")"
+  if [ "$verify_runtime_status" = "running" ]; then
+    runtime_reused="true"
+  else
+    start_runtime
+  fi
 fi
 
 status_output="$("$BROWSER_RUNTIME_HELPER" status --run-dir "$run_dir" --origin "$origin" --session-key "$session_key")"
@@ -266,7 +313,7 @@ evaluate_page_state() {
 
   page_info_output="$("$BROWSER_RUNTIME_HELPER" check-page --run-dir "$run_dir" --target-id "$current_target_id" --check page-info)"
   page_url="$(json_field url "$page_info_output")"
-  if [ "$page_url" = "$url" ]; then
+  if urls_match_normalized "$page_url" "$url"; then
     page_status="ready"
     return 0
   fi

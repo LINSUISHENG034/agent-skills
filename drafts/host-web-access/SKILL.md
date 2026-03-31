@@ -18,7 +18,8 @@ Use this draft when the agent needs public research plus the ability to escalate
 - resolves the durable profile via `profile-resolution.sh` before browser start
 - starts the host browser runtime only when the router returns `route: "browser"`
 - uses local `host-page-ops.py` and `host-page-snapshot.py` helpers instead of importing `ubuntu-browser-session`
-- always runs `cleanup-host-runtime.sh` so browser, Xvfb, x11vnc, and websockify PIDs are released after every task
+- runs `cleanup-host-runtime.sh` for standard completion so browser, Xvfb, x11vnc, and websockify PIDs are released after non-assisted tasks
+- preserves runtime and helper state when assisted handoff is returned; cleanup happens after assisted capture/stop
 - emits machine-readable JSON: all paths include `route`, `reason`, `needs_browser`, and `origin`; browser paths add `run_dir`, `profile_dir`, and `runtime_status`; assisted recovery additionally includes `assisted_session` and `lan_novnc_url`
 
 Assisted flow is the exception path. The normal path is to complete work through `open-host-page.sh` without operator takeover.
@@ -49,7 +50,7 @@ This section defines the required public contract for successor behavior. Runtim
 
 ## Cleanup Guarantees
 
-Cleanup scripts stop browser, Xvfb, x11vnc, and websockify PIDs when present, remove temporary runtime directories, and rewrite the runtime state to `STATE=closed` while leaving persistent profile data untouched.
+Cleanup scripts stop browser, Xvfb, x11vnc, and websockify PIDs when present, remove temporary runtime directories, and rewrite the runtime state to `STATE=closed` while leaving persistent profile data untouched. When assisted handoff is active, runtime state is intentionally preserved until assisted capture/stop finalizes the session.
 
 ## Page Helper Usage
 

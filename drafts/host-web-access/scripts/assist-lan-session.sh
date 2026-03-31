@@ -84,7 +84,11 @@ start_process() {
   local pid=$!
   printf '%s\n' "$pid" >"$(pid_file "$name")"
   sleep 1
-  pid_running "$pid" || die "$name failed to start; inspect $logfile"
+  if ! pid_running "$pid"; then
+    rm -f "$(pid_file "$name")"
+    printf '[assist-lan-session] ERROR: %s failed to start; inspect %s\n' "$name" "$logfile" >&2
+    return 1
+  fi
 }
 
 stop_process() {
@@ -347,16 +351,42 @@ start_assisted() {
   LAN_URL="$(lan_novnc_url "$LAN_HOST" "$NOVNC_PORT")"
 
   ensure_overlay_deps
-  write_state
+
+  local started_x11vnc="false"
+  local started_websockify="false"
+  rollback_assisted_start() {
+    if [ "$started_websockify" = "true" ]; then
+      stop_process websockify || true
+      rm -f "$(pid_file websockify)"
+    fi
+    if [ "$started_x11vnc" = "true" ]; then
+      stop_process x11vnc || true
+      rm -f "$(pid_file x11vnc)"
+    fi
+    rm -f "$(state_file)"
+  }
 
   if ! pid_running "$(read_pid x11vnc)"; then
-    start_process x11vnc "$LOG_DIR/x11vnc.log" \
+    if ! start_process x11vnc "$LOG_DIR/x11vnc.log" \
       env DISPLAY="$DISPLAY_VALUE" \
-      "$X11VNC_BIN" -display "$DISPLAY_VALUE" -forever -shared -rfbport "$VNC_PORT" -localhost -nopw
+      "$X11VNC_BIN" -display "$DISPLAY_VALUE" -forever -shared -rfbport "$VNC_PORT" -localhost -nopw; then
+      rollback_assisted_start
+      return 1
+    fi
+    started_x11vnc="true"
   fi
   if ! pid_running "$(read_pid websockify)"; then
-    start_process websockify "$LOG_DIR/websockify.log" \
-      "$WEBSOCKIFY_BIN" --web="$NOVNC_ROOT" "0.0.0.0:$NOVNC_PORT" "127.0.0.1:$VNC_PORT"
+    if ! start_process websockify "$LOG_DIR/websockify.log" \
+      "$WEBSOCKIFY_BIN" --web="$NOVNC_ROOT" "0.0.0.0:$NOVNC_PORT" "127.0.0.1:$VNC_PORT"; then
+      rollback_assisted_start
+      return 1
+    fi
+    started_websockify="true"
+  fi
+
+  if ! write_state; then
+    rollback_assisted_start
+    die "failed to write assisted state"
   fi
 
   printf 'lan_novnc_url: %s\n' "$LAN_URL"
