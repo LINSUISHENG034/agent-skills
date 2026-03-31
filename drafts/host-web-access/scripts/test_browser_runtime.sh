@@ -5,6 +5,16 @@ BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+pick_free_port() {
+  python3 - <<'PY'
+import socket
+
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+}
+
 status_output="$("$BASE_DIR/browser-runtime.sh" status --run-dir "$TMP_DIR")"
 printf '%s\n' "$status_output" | grep -q "status: missing"
 
@@ -107,6 +117,7 @@ set -e
 [ "$missing_status" -ne 0 ]
 printf '%s\n' "$missing_output" | grep -q "missing browser executable"
 
+runtime_port="$(pick_free_port)"
 start_output="$("$BASE_DIR/browser-runtime.sh" start \
   --run-dir "$TMP_DIR/task-run" \
   --profile-dir "$TMP_DIR/task-profile" \
@@ -114,7 +125,7 @@ start_output="$("$BASE_DIR/browser-runtime.sh" start \
   --origin "https://example.com" \
   --session-key default \
   --mode headless \
-  --cdp-port 24555 \
+  --cdp-port "$runtime_port" \
   --browser "$TMP_DIR/bin/browser-stub")"
 printf '%s\n' "$start_output" | grep -q "status: running"
 printf '%s\n' "$start_output" | grep -q "profile_dir: $TMP_DIR/task-profile"
@@ -125,7 +136,7 @@ grep -q '^CDP_HOST=127.0.0.1$' "$TMP_DIR/task-run/runtime.env"
 grep -q '^STATE=running$' "$TMP_DIR/task-run/runtime.env"
 grep -q '^BROWSER_COMMAND=' "$TMP_DIR/task-run/runtime.env"
 grep -q '^BROWSER_PID=' "$TMP_DIR/task-run/runtime.env"
-python3 - "$TMP_DIR/bin/browser-stub.args.json" <<'PY'
+python3 - "$TMP_DIR/bin/browser-stub.args.json" "$runtime_port" <<'PY'
 import json
 import sys
 
@@ -137,7 +148,7 @@ required = {
     "--no-default-browser-check",
     "--user-data-dir=" + sys.argv[1].replace("/bin/browser-stub.args.json", "/task-profile"),
     "--remote-debugging-address=127.0.0.1",
-    "--remote-debugging-port=24555",
+    "--remote-debugging-port=" + sys.argv[2],
     "https://example.com",
 }
 missing = sorted(required.difference(args))
