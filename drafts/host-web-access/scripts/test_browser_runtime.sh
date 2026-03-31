@@ -209,6 +209,14 @@ selected_target="$(
 )"
 printf '%s\n' "$selected_target" | grep -q '^page-account$'
 
+off_origin_target="$(
+  "$BASE_DIR/browser-runtime.sh" select-target \
+    --origin "https://example.com" \
+    --target-url "https://example.com/account" \
+    --targets-json '[{"id":"page-other","type":"page","url":"https://unrelated.example/page"}]'
+)"
+[ -z "$off_origin_target" ]
+
 challenge_output="$(AGENT_BROWSER_CDP_EVAL="$TMP_DIR/cdp-stub.py" \
   "$BASE_DIR/browser-runtime.sh" check-page --run-dir "$TMP_DIR/task-run" --cdp-port "$runtime_port" --target-id TARGET_ID --check challenge)"
 printf '%s\n' "$challenge_output" | grep -q '"hasChallenge": true'
@@ -264,6 +272,44 @@ verify_target_status=$?
 set -e
 [ "$verify_target_status" -ne 0 ]
 printf '%s\n' "$verify_target_output" | grep -q "target_id is no longer present for manifest bad-target"
+bad_target_manifest_state="$("$BASE_DIR/session-manifest.sh" show --root "$TMP_DIR/manifests" --origin "https://example.com" --session-key bad-target | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+[ "$bad_target_manifest_state" = "stale" ]
+
+unreachable_cdp_port="$(pick_free_port)"
+"$BASE_DIR/session-manifest.sh" write \
+  --root "$TMP_DIR/manifests" \
+  --origin "https://example.com" \
+  --session-key bad-cdp \
+  --state ready \
+  --browser-pid "$(
+    python3 - "$TMP_DIR/task-run/runtime.env" <<'PY'
+import shlex
+import sys
+
+state = {}
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    for raw in handle:
+        raw = raw.strip()
+        if not raw or "=" not in raw:
+            continue
+        k, v = raw.split("=", 1)
+        state[k] = shlex.split(v)[0] if v else ""
+print(state.get("BROWSER_PID", ""))
+PY
+  )" \
+  --cdp-port "$unreachable_cdp_port" >/dev/null
+set +e
+verify_cdp_output="$("$BASE_DIR/browser-runtime.sh" verify --run-dir "$TMP_DIR/task-run" --manifest-root "$TMP_DIR/manifests" --origin "https://example.com" --session-key bad-cdp 2>&1)"
+verify_cdp_status=$?
+set -e
+[ "$verify_cdp_status" -ne 0 ]
+printf '%s\n' "$verify_cdp_output" | grep -q "CDP endpoint is unreachable for manifest bad-cdp"
+bad_cdp_manifest_state="$("$BASE_DIR/session-manifest.sh" show --root "$TMP_DIR/manifests" --origin "https://example.com" --session-key bad-cdp | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+[ "$bad_cdp_manifest_state" = "stale" ]
+if printf '%s\n' "$verify_cdp_output" | grep -q "Traceback"; then
+  echo "expected controlled verify error without traceback"
+  exit 1
+fi
 
 grep -q '^CDP_HOST=127.0.0.1$' "$TMP_DIR/task-run/runtime.env"
 grep -q '^STATE=running$' "$TMP_DIR/task-run/runtime.env"

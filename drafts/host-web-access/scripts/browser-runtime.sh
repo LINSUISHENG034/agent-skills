@@ -326,7 +326,10 @@ def score(target):
     return (9, url)
 
 if targets:
-    print(sorted(targets, key=score)[0].get("id", ""))
+    best = sorted(targets, key=score)[0]
+    best_score = score(best)[0]
+    if best_score < 9:
+        print(best.get("id", ""))
 PY
 }
 
@@ -416,17 +419,24 @@ cmd_verify() {
   fi
 
   if [ -n "$cdp_port" ]; then
-    python3 - "$cdp_port" <<'PY'
+    if ! python3 - "$cdp_port" <<'PY'
 import json
 import sys
 import urllib.request
 
 port = sys.argv[1]
-with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2) as response:
-    payload = json.loads(response.read().decode("utf-8"))
+try:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+except Exception:
+    raise SystemExit(1)
 if not isinstance(payload, dict) or not payload.get("Browser"):
     raise SystemExit(1)
 PY
+    then
+      manifest_helper mark-stale --root "$MANIFEST_ROOT" --origin "$ORIGIN" --session-key "$SESSION_KEY" --reason "CDP endpoint is unreachable" >/dev/null || true
+      die "CDP endpoint is unreachable for manifest $SESSION_KEY"
+    fi
     if [ -n "$target_id" ]; then
       if ! python3 - "$cdp_port" "$target_id" <<'PY'
 import json
@@ -434,13 +444,17 @@ import sys
 import urllib.request
 
 port, target_id = sys.argv[1], sys.argv[2]
-with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=2) as response:
-    payload = json.loads(response.read().decode("utf-8"))
+try:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=2) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+except Exception:
+    raise SystemExit(1)
 targets = payload if isinstance(payload, list) else []
 if not any(str(item.get("id", "")) == target_id for item in targets):
     raise SystemExit(1)
 PY
       then
+        manifest_helper mark-stale --root "$MANIFEST_ROOT" --origin "$ORIGIN" --session-key "$SESSION_KEY" --reason "target_id is no longer present" >/dev/null || true
         die "target_id is no longer present for manifest $SESSION_KEY"
       fi
     fi
