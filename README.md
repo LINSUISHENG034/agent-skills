@@ -30,11 +30,40 @@ Local-only third-party skill sources live under `third_party/`.
 
 ## Draft Skills
 
-Drafts are kept under `drafts/` and are intentionally excluded from version control.
+Drafts are kept under `drafts/` and are intentionally excluded from the main repository history.
 
 - Move an unfinished skill into `drafts/` to keep it in the same workspace without publishing it.
 - Promote a skill by moving it from `drafts/<skill-name>/` to the repository root and removing any local-only files.
 - Root-level skills should be publishable; `drafts/` skills may be incomplete, experimental, or locally tied to one environment.
+
+### Local Draft Repository
+
+`drafts/` is also a separate local-only Git repository.
+
+- The main repository ignores `drafts/` content on purpose.
+- Use `git -C drafts ...` for draft commits, branches, diffs, and logs.
+- Keep new draft worktrees under `drafts/.worktrees/` via `git -C drafts worktree ...`, not under the main repository `.worktrees/`.
+- If an older main-repository worktree already exists under `drafts/.worktrees/`, treat it as legacy state and migrate it into the draft repository before reusing that path.
+- Do not configure a publish remote for the draft repository unless you intentionally want to distribute draft history.
+
+Typical local workflow:
+
+```bash
+# Inspect draft changes
+git -C drafts status --short
+
+# Commit only inside the local draft repository
+git -C drafts add <paths>
+git -C drafts commit -m "draft: ..."
+
+# Create an isolated draft worktree
+git -C drafts worktree add drafts/.worktrees/<branch-name> -b <branch-name>
+```
+
+Promotion rule:
+
+- Draft history stays in the local `drafts/` repository.
+- Publishable history stays in the main repository only after promotion to the repository root.
 
 ## Documentation
 

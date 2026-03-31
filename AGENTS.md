@@ -8,6 +8,7 @@ This repository is for publishable skills plus local-only development support fi
 - Promote a skill to the repository root only when it is ready to publish.
 - Keep published root-level skills portable and redistributable.
 - Reuse existing scripts and references where practical instead of duplicating workflows across skills.
+- Treat `drafts/` as a separate local-only Git repository for draft commits, branches, and worktrees.
 
 ## Skill Authoring Principles
 
@@ -45,6 +46,11 @@ Rules:
 - Keep local-only notes untracked.
 - If a local-only file is accidentally tracked, remove it from the index with `git rm --cached <path>` and keep the working copy on disk.
 - Keep commits focused on publishable skill changes, scripts, and repository documentation that is meant to ship.
+- Use the main repository only for publishable root-level skills and tracked repository docs.
+- Use `git -C drafts ...` for draft-only history; do not try to commit draft skill contents in the main repository.
+- Keep new draft worktrees under `drafts/.worktrees/` by running `git -C drafts worktree ...`; reserve the main repository `.worktrees/` for publishable repository work.
+- If a legacy main-repository worktree already lives under `drafts/.worktrees/`, do not reuse or extend it blindly; migrate it into the `drafts` repository first.
+- Do not add a default push remote to the local `drafts/` repository unless you explicitly intend to publish draft history somewhere else.
 
 ## Planning Workflow
 
