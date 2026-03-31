@@ -25,6 +25,8 @@ Local-only third-party skill sources live under `third_party/`.
   - Local transcription workflow using a bundled Qwen3 ASR runtime.
 - `markdown-mobile-export`
   - Faithful local Markdown to mobile long-image export with HTML sidecar output and browser-backed full-page capture.
+- `node-whisper`
+  - SSH-backed LAN Windows GPU transcription workflow for local audio or video files, with automatic runtime probe and repair.
 
 ## Draft Skills
 

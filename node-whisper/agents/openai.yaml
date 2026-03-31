@@ -1,0 +1,4 @@
+interface:
+  display_name: "Node Whisper"
+  short_description: "Run Whisper on a remote Windows GPU node"
+  default_prompt: "Use $node-whisper to transcribe a local audio or video file through a remote Windows GPU node, repairing the runtime automatically when needed."
