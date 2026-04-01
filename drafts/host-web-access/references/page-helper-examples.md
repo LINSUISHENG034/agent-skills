@@ -14,6 +14,27 @@
   `host-page-ops.py --click-link-text "Pricing"`
 - Capture the current page as markdown:
   `host-page-snapshot.py --format markdown`
+- Extract best-effort result links from a listing page:
+  `host-page-snapshot.py --format topic-links`
+
+## Topic-Links Output Shape
+
+`topic-links` returns JSON-encoded link objects in `content`, for example:
+
+```json
+[
+  {
+    "text": "Example topic title",
+    "href": "https://forum.example.com/t/example-topic/123",
+    "meta": "Category • Replies 12 • Last activity 2h ago",
+    "topicId": "123"
+  }
+]
+```
+
+Notes:
+- `meta` is optional and truncated for brevity.
+- `topicId` is optional and only present when the page provides it.
 
 ## Shell-Safe Invocation
 

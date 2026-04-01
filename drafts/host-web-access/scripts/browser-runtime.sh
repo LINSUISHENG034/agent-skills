@@ -12,17 +12,25 @@ Usage:
   browser-runtime.sh status [options]
   browser-runtime.sh stop [options]
   browser-runtime.sh list-targets [options]
+  browser-runtime.sh check-page --check TYPE [options]
+  browser-runtime.sh select-target [--origin URL] [--target-url URL] [--targets-json JSON]
+  browser-runtime.sh verify --origin URL --session-key KEY [--manifest-root DIR]
   browser-runtime.sh ensure-browser [options]
 
 Options:
   --browser CMD
   --cdp-port PORT
+  --check TYPE
   --display NUM
+  --manifest-root DIR
   --mode headless|gui
   --origin URL
   --profile-dir DIR
   --run-dir DIR
   --session-key KEY
+  --target-id ID
+  --target-url URL
+  --targets-json JSON
   --url URL
 EOF
 }
@@ -57,6 +65,32 @@ read_pid() {
 pid_running() {
   local pid="${1:-}"
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+manifest_helper() {
+  "${AGENT_BROWSER_MANIFEST_HELPER:-$SCRIPT_DIR/session-manifest.sh}" "$@"
+}
+
+cdp_eval() {
+  "${AGENT_BROWSER_CDP_EVAL:-$SCRIPT_DIR/host-page-ops.py}" "$@"
+}
+
+cleanup_profile_locks() {
+  local profile_dir="$1"
+  [ -n "$profile_dir" ] || return 0
+  local lock="$profile_dir/SingletonLock"
+  if [ -L "$lock" ]; then
+    local target pid
+    target="$(readlink "$lock" 2>/dev/null || true)"
+    pid="${target##*-}"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  rm -f \
+    "$lock" \
+    "$profile_dir/SingletonSocket" \
+    "$profile_dir/SingletonCookie"
 }
 
 load_state() {
@@ -181,6 +215,7 @@ PY
 
 resolve_context() {
   BASE_ROOT="${HOME}/.agent-browser"
+  MANIFEST_ROOT="${MANIFEST_ROOT:-$BASE_ROOT}"
   SESSION_KEY="${SESSION_KEY:-default}"
   MODE="${CLI_MODE:-${MODE:-headless}}"
   ORIGIN="${CLI_ORIGIN:-${ORIGIN:-}}"
@@ -212,6 +247,7 @@ resolve_context() {
   MODE="${CLI_MODE:-${MODE:-headless}}"
   ORIGIN="${CLI_ORIGIN:-${ORIGIN:-$ORIGIN}}"
   INITIAL_URL="${CLI_INITIAL_URL:-${INITIAL_URL:-$ORIGIN}}"
+  MANIFEST_ROOT="${CLI_MANIFEST_ROOT:-${MANIFEST_ROOT:-$BASE_ROOT}}"
   SESSION_KEY="${CLI_SESSION_KEY:-${SESSION_KEY:-default}}"
   CDP_HOST="${CDP_HOST:-127.0.0.1}"
   CDP_PORT="${CLI_CDP_PORT:-${CDP_PORT:-${HOST_WEB_ACCESS_CDP_PORT:-9222}}}"
@@ -246,6 +282,70 @@ runtime_status() {
   fi
 }
 
+manifest_field() {
+  local field="$1"
+  local payload="$2"
+  python3 - "$field" "$payload" <<'PY'
+import json
+import sys
+
+field = sys.argv[1]
+payload = json.loads(sys.argv[2])
+value = payload.get(field)
+if value is None:
+    raise SystemExit(1)
+if isinstance(value, (dict, list)):
+    print(json.dumps(value))
+else:
+    print(value)
+PY
+}
+
+select_target_from_json() {
+  local payload="$1"
+  python3 - "$ORIGIN" "$TARGET_URL" "$payload" <<'PY'
+import json
+import sys
+from urllib.parse import urlparse
+
+origin, target_url, payload = sys.argv[1:]
+targets = [target for target in json.loads(payload or "[]") if target.get("type") == "page"]
+
+def normalized_origin(value: str) -> str:
+    parsed = urlparse(value or "")
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+def host(value: str) -> str:
+    parsed = urlparse(value or "")
+    return parsed.netloc.lower()
+
+origin_norm = normalized_origin(origin)
+
+def score(target):
+    url = target.get("url", "")
+    url_origin_norm = normalized_origin(url)
+    if target_url and url == target_url:
+        return (0, url)
+    if origin_norm and url_origin_norm == origin_norm:
+        return (1, url)
+    if origin_norm and host(url) and host(url) == host(origin_norm):
+        return (2, url)
+    return (9, url)
+
+if targets:
+    best = sorted(targets, key=score)[0]
+    best_score = score(best)[0]
+    if best_score < 9:
+        print(best.get("id", ""))
+PY
+}
+
+load_manifest() {
+  manifest_helper show --root "$MANIFEST_ROOT" --origin "$ORIGIN" --session-key "$SESSION_KEY"
+}
+
 cmd_status() {
   resolve_context
   runtime_status
@@ -273,6 +373,13 @@ cmd_ensure_browser() {
   printf '%s\n' "$BROWSER_CMD"
 }
 
+cmd_check_page() {
+  resolve_context
+  require_arg --check "$CHECK_TYPE"
+  require_arg --cdp-port "$CDP_PORT"
+  cdp_eval --port "$CDP_PORT" ${TARGET_ID:+--target-id "$TARGET_ID"} --check "$CHECK_TYPE"
+}
+
 cmd_list_targets() {
   resolve_context
   runtime_status
@@ -294,6 +401,75 @@ except Exception:
     raise SystemExit(0)
 print(json.dumps(payload))
 PY
+}
+
+cmd_select_target() {
+  resolve_context
+  if [ -z "$TARGETS_JSON" ]; then
+    TARGETS_JSON="$(cmd_list_targets)"
+  fi
+  select_target_from_json "$TARGETS_JSON"
+}
+
+cmd_verify() {
+  resolve_context
+  require_arg --origin "$ORIGIN"
+  require_arg --session-key "$SESSION_KEY"
+
+  local manifest browser_pid cdp_port target_id
+  manifest="$(load_manifest)" || exit $?
+  browser_pid="$(manifest_field browser_pid "$manifest" || true)"
+  cdp_port="$(manifest_field cdp_port "$manifest" || true)"
+  target_id="$(manifest_field target_id "$manifest" || true)"
+
+  if [ -z "$browser_pid" ] || ! pid_running "$browser_pid"; then
+    manifest_helper mark-stale --root "$MANIFEST_ROOT" --origin "$ORIGIN" --session-key "$SESSION_KEY" --reason "browser process is not running" >/dev/null || true
+    die "browser is not running for manifest $SESSION_KEY"
+  fi
+
+  if [ -n "$cdp_port" ]; then
+    if ! python3 - "$cdp_port" <<'PY'
+import json
+import sys
+import urllib.request
+
+port = sys.argv[1]
+try:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+except Exception:
+    raise SystemExit(1)
+if not isinstance(payload, dict) or not payload.get("Browser"):
+    raise SystemExit(1)
+PY
+    then
+      manifest_helper mark-stale --root "$MANIFEST_ROOT" --origin "$ORIGIN" --session-key "$SESSION_KEY" --reason "CDP endpoint is unreachable" >/dev/null || true
+      die "CDP endpoint is unreachable for manifest $SESSION_KEY"
+    fi
+    if [ -n "$target_id" ]; then
+      if ! python3 - "$cdp_port" "$target_id" <<'PY'
+import json
+import sys
+import urllib.request
+
+port, target_id = sys.argv[1], sys.argv[2]
+try:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=2) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+except Exception:
+    raise SystemExit(1)
+targets = payload if isinstance(payload, list) else []
+if not any(str(item.get("id", "")) == target_id for item in targets):
+    raise SystemExit(1)
+PY
+      then
+        manifest_helper mark-stale --root "$MANIFEST_ROOT" --origin "$ORIGIN" --session-key "$SESSION_KEY" --reason "target_id is no longer present" >/dev/null || true
+        die "target_id is no longer present for manifest $SESSION_KEY"
+      fi
+    fi
+  fi
+
+  printf '%s\n' "$manifest"
 }
 
 cleanup_runtime_on_failure() {
@@ -321,7 +497,15 @@ cmd_start() {
   runtime_status
   [ "$STATE" != "running" ] || die "browser runtime already running"
 
+  if [ -z "${CLI_CDP_PORT:-}" ]; then
+    CDP_PORT="$(pick_free_tcp_port "$CDP_PORT")" || die "unable to find free CDP port near $CDP_PORT"
+  fi
+  if [ "$MODE" = "gui" ] && [ -z "${CLI_DISPLAY_NUM:-}" ]; then
+    DISPLAY_NUM="$(pick_free_display "$DISPLAY_NUM")" || die "unable to find free display near :$DISPLAY_NUM"
+  fi
+
   mkdir -p "$RUN_DIR" "$LOG_DIR" "$PROFILE_DIR"
+  cleanup_profile_locks "$PROFILE_DIR"
 
   local browser_args=(
     --no-first-run
@@ -381,6 +565,7 @@ COMMAND="${1:-}"
 shift || true
 
 CLI_RUN_DIR=""
+CLI_MANIFEST_ROOT=""
 CLI_MODE=""
 CLI_ORIGIN=""
 CLI_INITIAL_URL=""
@@ -389,6 +574,10 @@ CLI_PROFILE_DIR=""
 CLI_CDP_PORT=""
 CLI_DISPLAY_NUM=""
 CLI_BROWSER_CMD=""
+CHECK_TYPE=""
+TARGET_ID=""
+TARGET_URL=""
+TARGETS_JSON=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -398,6 +587,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --mode)
       CLI_MODE="$2"
+      shift 2
+      ;;
+    --manifest-root)
+      CLI_MANIFEST_ROOT="$2"
       shift 2
       ;;
     --origin)
@@ -422,6 +615,22 @@ while [ "$#" -gt 0 ]; do
       ;;
     --browser)
       CLI_BROWSER_CMD="$2"
+      shift 2
+      ;;
+    --check)
+      CHECK_TYPE="$2"
+      shift 2
+      ;;
+    --target-id)
+      TARGET_ID="$2"
+      shift 2
+      ;;
+    --target-url)
+      TARGET_URL="$2"
+      shift 2
+      ;;
+    --targets-json)
+      TARGETS_JSON="$2"
       shift 2
       ;;
     --url)
@@ -450,6 +659,15 @@ case "$COMMAND" in
     ;;
   list-targets)
     cmd_list_targets
+    ;;
+  check-page)
+    cmd_check_page
+    ;;
+  select-target)
+    cmd_select_target
+    ;;
+  verify)
+    cmd_verify
     ;;
   ensure-browser)
     cmd_ensure_browser

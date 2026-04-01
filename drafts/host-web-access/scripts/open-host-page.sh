@@ -64,12 +64,50 @@ elif value is not None:
 PY
 }
 
+urls_match_normalized() {
+  local current_url="$1"
+  local expected_url="$2"
+  python3 - "$current_url" "$expected_url" <<'PY'
+import sys
+from urllib.parse import urlparse, urlunparse
+
+current_raw, expected_raw = sys.argv[1:]
+
+def normalize(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return raw.rstrip("/")
+    path = parsed.path or ""
+    if path not in ("", "/"):
+        path = path.rstrip("/")
+    else:
+        path = ""
+    return urlunparse((
+        parsed.scheme.lower(),
+        parsed.netloc.lower(),
+        path,
+        parsed.params,
+        parsed.query,
+        "",
+    ))
+
+current_value = normalize(current_raw)
+expected_value = normalize(expected_raw)
+if current_value and expected_value and current_value == expected_value:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 emit_result() {
   python3 - "$@" <<'PY'
 import json
 import sys
 
-route, reason, needs_browser, origin, run_dir, profile_dir, runtime_status, assisted_session, lan_novnc_url = sys.argv[1:10]
+route, reason, needs_browser, origin, run_dir, profile_dir, runtime_status, page_status, target_id, recovery_attempted, assisted_session, lan_novnc_url = sys.argv[1:13]
 
 payload = {
     "route": route,
@@ -84,6 +122,12 @@ if profile_dir:
     payload["profile_dir"] = profile_dir
 if runtime_status:
     payload["runtime_status"] = runtime_status
+if page_status:
+    payload["page_status"] = page_status
+if target_id:
+    payload["target_id"] = target_id
+if recovery_attempted:
+    payload["recovery_attempted"] = recovery_attempted == "true"
 if assisted_session:
     payload["assisted_session"] = assisted_session == "true"
 if lan_novnc_url:
@@ -120,6 +164,7 @@ BROWSER_RUNTIME_HELPER="${HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER:-$SCRIPT_DIR/br
 ASSIST_HELPER="${HOST_WEB_ACCESS_ASSIST_HELPER:-$SCRIPT_DIR/assist-lan-session.sh}"
 CLEANUP_HELPER="${HOST_WEB_ACCESS_CLEANUP_HELPER:-$SCRIPT_DIR/cleanup-host-runtime.sh}"
 PROFILE_HELPER="${HOST_WEB_ACCESS_PROFILE_HELPER:-$SCRIPT_DIR/profile-resolution.sh}"
+PAGE_OPS_HELPER="${HOST_WEB_ACCESS_PAGE_OPS_HELPER:-$SCRIPT_DIR/host-page-ops.py}"
 
 task_mode="latest"
 expected_action=""
@@ -178,7 +223,7 @@ needs_browser="$(json_field needs_browser "$route_output")"
 assert_expected_route
 
 if [ "$route" != "browser" ]; then
-  emit_result "$route" "$reason" "$needs_browser" "$origin" "" "" "" "" ""
+  emit_result "$route" "$reason" "$needs_browser" "$origin" "" "" "" "" "" "" "" ""
   exit 0
 fi
 
@@ -193,6 +238,9 @@ profile_dir="$(json_field profile_dir "$resolved_profile")"
 [ -n "$profile_dir" ] || die "profile-resolution did not return profile_dir"
 
 cleanup_browser() {
+  if [ "${PRESERVE_RUNTIME_ON_EXIT:-false}" = "true" ]; then
+    return 0
+  fi
   "$CLEANUP_HELPER" --run-dir "$run_dir" >/dev/null 2>&1 || true
 }
 
@@ -202,35 +250,131 @@ if ! "$BROWSER_RUNTIME_HELPER" ensure-browser --run-dir "$run_dir" >/dev/null; t
   die "browser dependency check failed"
 fi
 
-"$BROWSER_RUNTIME_HELPER" start \
+start_runtime() {
+  "$BROWSER_RUNTIME_HELPER" start \
+    --run-dir "$run_dir" \
+    --profile-dir "$profile_dir" \
+    --url "$url" \
+    --origin "$origin" \
+    --session-key "$session_key" \
+    --mode gui >/dev/null
+}
+
+select_target() {
+  "$BROWSER_RUNTIME_HELPER" select-target \
+    --run-dir "$run_dir" \
+    --origin "$origin" \
+    --target-url "$url"
+}
+
+runtime_reused="false"
+if "$BROWSER_RUNTIME_HELPER" verify \
   --run-dir "$run_dir" \
-  --profile-dir "$profile_dir" \
-  --url "$url" \
+  --manifest-root "$manifest_root" \
   --origin "$origin" \
-  --session-key "$session_key" \
-  --mode gui >/dev/null
+  --session-key "$session_key" >/dev/null 2>&1; then
+  runtime_reused="true"
+else
+  verify_status_output="$("$BROWSER_RUNTIME_HELPER" status \
+    --run-dir "$run_dir" \
+    --origin "$origin" \
+    --session-key "$session_key" 2>/dev/null || true)"
+  verify_runtime_status="$(status_field status "$verify_status_output")"
+  if [ "$verify_runtime_status" = "running" ]; then
+    runtime_reused="true"
+  else
+    start_runtime
+  fi
+fi
 
 status_output="$("$BROWSER_RUNTIME_HELPER" status --run-dir "$run_dir" --origin "$origin" --session-key "$session_key")"
 runtime_status="$(status_field status "$status_output")"
+cdp_port="$(status_field cdp_port "$status_output")"
+page_status=""
+target_id=""
+recovery_attempted="false"
+
+evaluate_page_state() {
+  local current_target_id="$1"
+  local challenge_output challenge_flag login_output login_flag page_info_output page_url
+  challenge_output="$("$BROWSER_RUNTIME_HELPER" check-page --run-dir "$run_dir" --target-id "$current_target_id" --check challenge)"
+  challenge_flag="$(json_field hasChallenge "$challenge_output")"
+  if [ "$challenge_flag" = "true" ]; then
+    page_status="challenge"
+    return 0
+  fi
+
+  login_output="$("$BROWSER_RUNTIME_HELPER" check-page --run-dir "$run_dir" --target-id "$current_target_id" --check login-wall)"
+  login_flag="$(json_field hasLoginWall "$login_output")"
+  if [ "$login_flag" = "true" ]; then
+    page_status="login-wall"
+    return 0
+  fi
+
+  page_info_output="$("$BROWSER_RUNTIME_HELPER" check-page --run-dir "$run_dir" --target-id "$current_target_id" --check page-info)"
+  page_url="$(json_field url "$page_info_output")"
+  if urls_match_normalized "$page_url" "$url"; then
+    page_status="ready"
+    return 0
+  fi
+
+  page_status="target-mismatch"
+  return 1
+}
+
+target_id="$(select_target || true)"
+needs_recovery="false"
+if [ -n "$target_id" ]; then
+  if ! evaluate_page_state "$target_id"; then
+    needs_recovery="true"
+  fi
+else
+  page_status="target-mismatch"
+  needs_recovery="true"
+fi
+
+if [ "$needs_recovery" = "true" ]; then
+  recovery_attempted="true"
+  if [ "$runtime_status" = "running" ] && [ -n "$target_id" ] && [ -n "$cdp_port" ]; then
+    "$PAGE_OPS_HELPER" \
+      --port "$cdp_port" \
+      --target-id "$target_id" \
+      --navigate "$url" \
+      --wait-navigation >/dev/null 2>&1 || true
+  else
+    start_runtime >/dev/null 2>&1 || true
+  fi
+  status_output="$("$BROWSER_RUNTIME_HELPER" status --run-dir "$run_dir" --origin "$origin" --session-key "$session_key")"
+  runtime_status="$(status_field status "$status_output")"
+  cdp_port="$(status_field cdp_port "$status_output")"
+  target_id="$(select_target || true)"
+  if [ "$runtime_status" = "running" ] && [ -n "$target_id" ]; then
+    evaluate_page_state "$target_id" || true
+  else
+    page_status="target-mismatch"
+  fi
+fi
+
 assisted_session=""
 lan_novnc_url=""
-if [ "$runtime_status" != "running" ]; then
-  assist_output="$("$ASSIST_HELPER" start \
-    --run-dir "$run_dir" \
-    --origin "$origin" \
-    --session-key "$session_key" \
-    --profile-dir "$profile_dir" \
-    --manifest-root "$manifest_root")"
-  lan_novnc_url="$(status_field lan_novnc_url "$assist_output")"
-  assisted_session="true"
-  "$ASSIST_HELPER" capture \
-    --run-dir "$run_dir" \
-    --origin "$origin" \
-    --session-key "$session_key" \
-    --profile-dir "$profile_dir" \
-    --manifest-root "$manifest_root" >/dev/null
-  "$ASSIST_HELPER" stop --run-dir "$run_dir" >/dev/null
-fi
+PRESERVE_RUNTIME_ON_EXIT="false"
+case "$page_status" in
+  challenge|login-wall|target-mismatch)
+    assist_output="$("$ASSIST_HELPER" start \
+      --run-dir "$run_dir" \
+      --origin "$origin" \
+      --target-url "$url" \
+      --session-key "$session_key" \
+      --profile-dir "$profile_dir" \
+      --manifest-root "$manifest_root")"
+    lan_novnc_url="$(status_field lan_novnc_url "$assist_output")"
+    [ -n "$lan_novnc_url" ] || die "assisted handoff missing lan_novnc_url"
+    assisted_session="true"
+    PRESERVE_RUNTIME_ON_EXIT="true"
+    ;;
+  *)
+    ;;
+esac
 
 emit_result \
   "$route" \
@@ -240,5 +384,8 @@ emit_result \
   "$run_dir" \
   "$profile_dir" \
   "$runtime_status" \
+  "$page_status" \
+  "$target_id" \
+  "$recovery_attempted" \
   "$assisted_session" \
   "$lan_novnc_url"
