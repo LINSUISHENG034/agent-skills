@@ -186,6 +186,46 @@ else:
 PY
 }
 
+emit_handoff_result() {
+  python3 - "$@" <<'PY'
+import json
+import sys
+
+(
+    status,
+    next_action,
+    operator_required,
+    operator_url,
+    lan_novnc_url,
+    resume_command,
+    message_for_agent,
+    capture_completed,
+    assisted_session_stopped,
+) = sys.argv[1:10]
+
+payload = {
+    "status": status,
+    "next_action": next_action,
+    "operator_required": operator_required == "true",
+}
+
+if operator_url:
+    payload["operator_url"] = operator_url
+if lan_novnc_url:
+    payload["lan_novnc_url"] = lan_novnc_url
+if resume_command:
+    payload["resume_command"] = resume_command
+if message_for_agent:
+    payload["message_for_agent"] = message_for_agent
+if capture_completed:
+    payload["capture_completed"] = capture_completed == "true"
+if assisted_session_stopped:
+    payload["assisted_session_stopped"] = assisted_session_stopped == "true"
+
+print(json.dumps(payload))
+PY
+}
+
 identity_providers() {
   local page_json="${1:-}"
   local target_url="$ORIGIN"
@@ -389,12 +429,20 @@ start_assisted() {
     die "failed to write assisted state"
   fi
 
-  printf 'lan_novnc_url: %s\n' "$LAN_URL"
+  local resume_command message_for_agent
+  printf -v resume_command '%q capture --run-dir %q --origin %q --target-url %q --session-key %q --profile-dir %q --manifest-root %q' \
+    "$0" "$RUN_DIR" "$ORIGIN" "$TARGET_URL" "$SESSION_KEY" "$PROFILE_DIR" "$MANIFEST_ROOT"
+  message_for_agent="Stop autonomous browsing. Ask the user to open operator_url and complete login, then run resume_command."
+  emit_handoff_result "needs-user" "open-novnc" "true" "$LAN_URL" "$LAN_URL" "$resume_command" "$message_for_agent" "" ""
 }
 
 status_assisted() {
   load_state
-  printf 'lan_novnc_url: %s\n' "$LAN_URL"
+  local resume_command message_for_agent
+  printf -v resume_command '%q capture --run-dir %q --origin %q --target-url %q --session-key %q --profile-dir %q --manifest-root %q' \
+    "$0" "$RUN_DIR" "$ORIGIN" "$TARGET_URL" "$SESSION_KEY" "$PROFILE_DIR" "$MANIFEST_ROOT"
+  message_for_agent="Stop autonomous browsing. Ask the user to open operator_url and complete login, then run resume_command."
+  emit_handoff_result "needs-user" "open-novnc" "true" "$LAN_URL" "$LAN_URL" "$resume_command" "$message_for_agent" "" ""
 }
 
 capture_assisted() {
@@ -480,7 +528,7 @@ capture_assisted() {
 
   write_identity_metadata "$page_json"
 
-  printf 'lan_novnc_url: %s\n' "$LAN_URL"
+  emit_handoff_result "ready" "none" "false" "$LAN_URL" "$LAN_URL" "" "" "true" ""
 }
 
 stop_assisted() {
@@ -488,6 +536,7 @@ stop_assisted() {
   stop_process websockify
   stop_process x11vnc
   rm -f "$(state_file)"
+  emit_handoff_result "stopped" "none" "false" "" "" "" "" "" "true"
 }
 
 COMMAND="${1:-}"

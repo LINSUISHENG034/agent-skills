@@ -34,10 +34,28 @@ status_field() {
   local field="$1"
   local payload="$2"
   python3 - "$field" "$payload" <<'PY'
+import json
 import sys
 
 target = sys.argv[1]
-for raw in sys.argv[2].splitlines():
+payload = sys.argv[2]
+
+try:
+    parsed = json.loads(payload)
+except json.JSONDecodeError:
+    parsed = None
+
+if isinstance(parsed, dict) and target in parsed:
+    value = parsed.get(target)
+    if isinstance(value, bool):
+        print("true" if value else "false")
+    elif isinstance(value, (dict, list)):
+        print(json.dumps(value))
+    elif value is not None:
+        print(value)
+    raise SystemExit(0)
+
+for raw in payload.splitlines():
     if ":" not in raw:
         continue
     key, value = raw.split(":", 1)
@@ -107,15 +125,46 @@ emit_result() {
 import json
 import sys
 
-route, reason, needs_browser, origin, run_dir, profile_dir, runtime_status, page_status, target_id, recovery_attempted, assisted_session, lan_novnc_url = sys.argv[1:13]
+(
+    route,
+    reason,
+    needs_browser,
+    origin,
+    status,
+    next_action,
+    operator_required,
+    operator_url,
+    blocking_reason,
+    resume_command,
+    message_for_agent,
+    run_dir,
+    profile_dir,
+    runtime_status,
+    page_status,
+    target_id,
+    recovery_attempted,
+    assisted_session,
+    lan_novnc_url,
+) = sys.argv[1:20]
 
 payload = {
     "route": route,
     "reason": reason,
     "needs_browser": needs_browser == "true",
     "origin": origin,
+    "status": status,
+    "next_action": next_action,
+    "operator_required": operator_required == "true",
 }
 
+if operator_url:
+    payload["operator_url"] = operator_url
+if blocking_reason:
+    payload["blocking_reason"] = blocking_reason
+if resume_command:
+    payload["resume_command"] = resume_command
+if message_for_agent:
+    payload["message_for_agent"] = message_for_agent
 if run_dir:
     payload["run_dir"] = run_dir
 if profile_dir:
@@ -223,7 +272,7 @@ needs_browser="$(json_field needs_browser "$route_output")"
 assert_expected_route
 
 if [ "$route" != "browser" ]; then
-  emit_result "$route" "$reason" "$needs_browser" "$origin" "" "" "" "" "" "" "" ""
+  emit_result "$route" "$reason" "$needs_browser" "$origin" "ready" "none" "false" "" "" "" "" "" "" "" "" "" "" "" ""
   exit 0
 fi
 
@@ -357,6 +406,13 @@ fi
 
 assisted_session=""
 lan_novnc_url=""
+status="ready"
+next_action="none"
+operator_required="false"
+operator_url=""
+blocking_reason=""
+resume_command=""
+message_for_agent=""
 PRESERVE_RUNTIME_ON_EXIT="false"
 case "$page_status" in
   challenge|login-wall|target-mismatch)
@@ -370,6 +426,14 @@ case "$page_status" in
     lan_novnc_url="$(status_field lan_novnc_url "$assist_output")"
     [ -n "$lan_novnc_url" ] || die "assisted handoff missing lan_novnc_url"
     assisted_session="true"
+    status="needs-user"
+    next_action="open-novnc"
+    operator_required="true"
+    operator_url="${lan_novnc_url}"
+    blocking_reason="${page_status}"
+    printf -v resume_command '%q capture --run-dir %q --origin %q --target-url %q --session-key %q --profile-dir %q --manifest-root %q' \
+      "$ASSIST_HELPER" "$run_dir" "$origin" "$url" "$session_key" "$profile_dir" "$manifest_root"
+    message_for_agent="Stop autonomous browsing. Ask the user to open operator_url and complete the required interaction, then run resume_command."
     PRESERVE_RUNTIME_ON_EXIT="true"
     ;;
   *)
@@ -381,6 +445,13 @@ emit_result \
   "$reason" \
   "$needs_browser" \
   "$origin" \
+  "$status" \
+  "$next_action" \
+  "$operator_required" \
+  "$operator_url" \
+  "$blocking_reason" \
+  "$resume_command" \
+  "$message_for_agent" \
   "$run_dir" \
   "$profile_dir" \
   "$runtime_status" \

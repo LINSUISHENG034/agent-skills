@@ -10,8 +10,9 @@
 - Browser runtime restores runtime reuse primitives: `select-target` ranks page targets from `/json/list` and returns no usable target for off-origin-only lists, `check-page` supports `challenge|login-wall|page-info`, and `verify` marks manifests stale cleanly for dead-browser, unreachable-CDP, and missing-target branches
 - Browser runtime clears stale Chromium singleton locks before launch while preserving live locks, and auto-selects free CDP/display values when callers leave them unspecified
 - Verify wrong-page recovery before user takeover so assisted sessions begin from the expected account page
-- Validate LAN-only assisted handoff by asserting only `lan_novnc_url` is exposed in operator-facing recovery output
+- Validate LAN-only assisted handoff through the public JSON contract: `open-host-page.sh` always emits `status`, `next_action`, and `operator_required`; blocked handoff also emits `operator_url`, `blocking_reason`, `resume_command`, and `message_for_agent`
+- Validate assisted-session JSON output: `start|status` emit the explicit noVNC handoff contract, `capture` emits `capture_completed: true`, and `stop` emits `assisted_session_stopped: true`
 - Confirm browser-route continuity on protected tasks from initial route classification through post-recovery continuation
-- Assisted LAN start records `x11vnc.pid` and `websockify.pid`, status reports only the LAN noVNC URL, and stop clears assisted runtime state
+- Assisted LAN start records `x11vnc.pid` and `websockify.pid`, status preserves the explicit JSON handoff contract, and stop clears assisted runtime state
 - Host page helpers are local to `host-web-access`, do not import `ubuntu-browser-session`, and expose retry/help coverage for dynamic-page checks plus shell-safe invocation guidance
 - Cleanup is idempotent and safe when no browser resources are active

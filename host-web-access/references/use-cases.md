@@ -6,14 +6,14 @@
 - Successor identity governance: keep one primary identity per canonical site and require explicit `session-key` for secondary identities
 - Confirm wrong-page recovery before user takeover so protected-site tasks return to the expected account context first
 - Keep protected-site browser-route continuity on protected tasks instead of switching to fetch-only flows mid-task
-- Validate LAN-only assisted handoff by checking `lan_novnc_url` output on recovery sessions
+- Validate assisted handoff by checking the JSON contract on recovery sessions, especially `status`, `next_action`, `operator_required`, `operator_url`, and `lan_novnc_url`
 - Validate the routing contract: `task-mode` expresses caller intent, `route` normalizes that intent to `search`, `fetch`, or `browser`, and `reason` preserves the specific classification that justified the route
 - Verify `--expected-action` as a route assertion only: mismatches fail before browser orchestration starts, while successful `browser` routing can still surface runtime or assisted-recovery status separately
 - Validate browser-route reuse: when a verified runtime is already available, `open-host-page.sh` reuses it and still verifies target-page correctness before reporting success
 - Validate browser-route target-state reporting: browser responses expose `page_status`, `target_id` (when available), and `recovery_attempted` so downstream tools can branch on `ready`, `challenge`, `login-wall`, and `target-mismatch`
 - Validate wrong-page handling: the browser path attempts one local recovery for target drift before escalating to assisted flow
 - Validate the integrated `open-host-page.sh` path: the router stays on lightweight search when `route: "search"`, launches the browser runtime only when the router reports `browser`, and on blocked states returns assisted LAN handoff payload without premature assisted capture
-- Confirm fixed-port LAN assisted recovery by starting a blocked session and verifying `assist-lan-session.sh` prints only `lan_novnc_url`; verify manifest/site/identity metadata updates only after an explicit successful assisted capture
+- Confirm fixed-port LAN assisted recovery by starting a blocked session and verifying `assist-lan-session.sh` emits the explicit noVNC handoff JSON; verify manifest/site/identity metadata updates only after an explicit successful assisted capture
 - Capture page state quickly with `host-page-ops.py --check page-info` before deciding whether to click, scroll, or snapshot
 - Navigate with `host-page-ops.py --navigate "https://example.com" --wait-navigation` when the caller needs the next page to finish loading before further DOM operations
 - Use `host-page-ops.py --click-link-text "Pricing"` for generic visible-link navigation instead of site-specific selectors when text matching is sufficient

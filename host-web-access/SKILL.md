@@ -21,7 +21,7 @@ Use this skill when the agent needs public research plus the ability to escalate
 - uses local `host-page-ops.py` and `host-page-snapshot.py` helpers instead of importing `ubuntu-browser-session`
 - runs `cleanup-host-runtime.sh` for standard completion so browser, Xvfb, x11vnc, and websockify PIDs are released after non-assisted tasks
 - preserves runtime and helper state when assisted handoff is returned; cleanup happens after assisted capture/stop
-- emits machine-readable JSON: all paths include `route`, `reason`, `needs_browser`, and `origin`; browser paths add `run_dir`, `profile_dir`, and `runtime_status`; assisted recovery additionally includes `assisted_session` and `lan_novnc_url`
+- emits machine-readable JSON: all paths include `route`, `reason`, `needs_browser`, `origin`, `status`, `next_action`, and `operator_required`; browser paths add `run_dir`, `profile_dir`, `runtime_status`, and `page_status`; assisted recovery additionally includes `operator_url`, `blocking_reason`, `resume_command`, `message_for_agent`, `assisted_session`, and `lan_novnc_url`
 
 Assisted flow is the exception path. The normal path is to complete work through `open-host-page.sh` without operator takeover.
 
@@ -34,12 +34,15 @@ Start with `WebSearch`, `WebFetch`, `curl`, or `Jina` for public requests. Escal
 - `task-mode` expresses caller intent such as `latest`, `article`, `interactive`, or `host-browser`
 - `route` is the normalized router decision: `search`, `fetch`, or `browser`
 - `reason` keeps the specific classification that explains why the route was chosen
+- `status` is the canonical task outcome for agents: `ready` when autonomous work may continue, `needs-user` when a human handoff is required
+- `next_action` is the explicit next step for the caller: `none` for ready states, `open-novnc` for assisted handoff
+- `operator_required` is the hard stop bit; when it is `true`, do not continue autonomous browsing
 - `--expected-action` asserts the normalized route returned by the router; it does not assert that browser startup or assisted recovery succeeded
 - Route assertion failures happen before browser orchestration starts, so a mismatch never launches the runtime
 
 ## Assisted LAN Flow
 
-The assisted path exposes a single fixed LAN `lan_novnc_url` on port `6084` by default. The `capture` command writes both the session manifest and site-session registry entry so future tasks reuse the same host profile.
+The assisted path exposes a single fixed LAN `lan_novnc_url` on port `6084` by default. Assisted outputs also include `operator_url`, `resume_command`, and `message_for_agent` so the next step is explicit. The `capture` command writes both the session manifest and site-session registry entry so future tasks reuse the same host profile.
 
 ## Identity And Protected Route Rules
 
@@ -48,6 +51,8 @@ Protected-site browser work stays in the host-browser workflow by default. The n
 Successor policy: one primary identity per canonical site. Secondary identities are opt-in and must be selected explicitly with `--session-key`; the skill does not auto-select between multiple identities.
 
 This section defines the required public contract for successor behavior. Runtime enforcement coverage is being completed incrementally; when enforcement and policy diverge, follow this policy in operator and caller workflows.
+
+Agent rule: if `operator_required` is `true`, stop autonomous browsing, show the user `operator_url`, and resume only through `resume_command` after the user completes the required interaction.
 
 ## Cleanup Guarantees
 

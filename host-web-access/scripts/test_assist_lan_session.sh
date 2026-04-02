@@ -7,6 +7,37 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 mkdir -p "$TMP_DIR/home"
 export HOME="$TMP_DIR/home"
 
+assert_json_value() {
+  local payload="$1"
+  local field="$2"
+  local expected="$3"
+  python3 - "$payload" "$field" "$expected" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+field = sys.argv[2]
+expected = sys.argv[3]
+actual = data.get(field)
+if isinstance(actual, bool):
+    actual = "true" if actual else "false"
+assert actual == expected, data
+PY
+}
+
+assert_json_has_fields() {
+  local payload="$1"
+  shift
+  python3 - "$payload" "$@" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+for field in sys.argv[2:]:
+    assert field in data, data
+PY
+}
+
 cat >"$TMP_DIR/runtime-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -198,27 +229,39 @@ printf '%s\n' "$partial_start_output" | grep -q 'websockify'
 [ ! -f "$TMP_DIR/assist-partial-fail/assist.env" ]
 ! pgrep -f "$TMP_DIR/process-stub.sh" >/dev/null 2>&1
 
-AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
-AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
-AGENT_BROWSER_X11VNC_BIN="$TMP_DIR/process-stub.sh" \
-AGENT_BROWSER_WEBSOCKIFY_BIN="$TMP_DIR/process-stub.sh" \
-AGENT_BROWSER_NOVNC_WEB_ROOT="$TMP_DIR/novnc-root" \
-AGENT_BROWSER_NOVNC_PUBLIC_HOST="192.168.1.44" \
-  "$BASE_DIR/assist-lan-session.sh" start \
-    --run-dir "$run_root" \
-    --origin "https://example.com" \
-    --session-key default \
-    --profile-dir "$profile_dir" \
-    --manifest-root "$manifest_root" >/dev/null
+start_output="$(
+  AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_X11VNC_BIN="$TMP_DIR/process-stub.sh" \
+  AGENT_BROWSER_WEBSOCKIFY_BIN="$TMP_DIR/process-stub.sh" \
+  AGENT_BROWSER_NOVNC_WEB_ROOT="$TMP_DIR/novnc-root" \
+  AGENT_BROWSER_NOVNC_PUBLIC_HOST="192.168.1.44" \
+    "$BASE_DIR/assist-lan-session.sh" start \
+      --run-dir "$run_root" \
+      --origin "https://example.com" \
+      --session-key default \
+      --profile-dir "$profile_dir" \
+      --manifest-root "$manifest_root"
+)"
+
+assert_json_has_fields "$start_output" status next_action operator_required operator_url lan_novnc_url resume_command message_for_agent
+assert_json_value "$start_output" status needs-user
+assert_json_value "$start_output" next_action open-novnc
+assert_json_value "$start_output" operator_required true
+assert_json_value "$start_output" operator_url "http://192.168.1.44:6084/vnc.html?autoconnect=1&resize=remote"
+assert_json_value "$start_output" lan_novnc_url "http://192.168.1.44:6084/vnc.html?autoconnect=1&resize=remote"
 
 [ -f "$run_root/x11vnc.pid" ]
 [ -f "$run_root/websockify.pid" ]
 [ -f "$run_root/assist.env" ]
 
 status="$("$BASE_DIR/assist-lan-session.sh" status --run-dir "$run_root")"
-printf '%s\n' "$status" | grep -q '^lan_novnc_url: http://192\.168\.1\.44:6084/vnc\.html?autoconnect=1&resize=remote$'
-printf '%s\n' "$status" | grep -vq '127.0.0.1'
-printf '%s\n' "$status" | grep -vq '^novnc_url:'
+assert_json_has_fields "$status" status next_action operator_required operator_url lan_novnc_url resume_command message_for_agent
+assert_json_value "$status" status needs-user
+assert_json_value "$status" next_action open-novnc
+assert_json_value "$status" operator_required true
+assert_json_value "$status" operator_url "http://192.168.1.44:6084/vnc.html?autoconnect=1&resize=remote"
+assert_json_value "$status" lan_novnc_url "http://192.168.1.44:6084/vnc.html?autoconnect=1&resize=remote"
 
 set +e
 challenge_output="$(
@@ -295,21 +338,30 @@ set -e
 printf '%s\n' "$wrong_target_output" | grep -q 'requested target page'
 test ! -d "$manifest_root/sessions"
 
-RUNTIME_STUB_PAGE_URL='https://example.com/protected/' \
-RUNTIME_STUB_PAGE_TITLE='Example Protected' \
-RUNTIME_STUB_PAGE_BODY='ready' \
-RUNTIME_STUB_TARGETS_JSON='[
-  {"id":"page-example","type":"page","url":"https://example.com/protected"}
-]' \
-AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
-AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
-  "$BASE_DIR/assist-lan-session.sh" capture \
-    --run-dir "$run_root" \
-    --origin "https://example.com" \
-    --target-url "https://example.com/protected" \
-    --session-key default \
-    --profile-dir "$profile_dir" \
-    --manifest-root "$manifest_root" >/dev/null
+capture_output="$(
+  RUNTIME_STUB_PAGE_URL='https://example.com/protected/' \
+  RUNTIME_STUB_PAGE_TITLE='Example Protected' \
+  RUNTIME_STUB_PAGE_BODY='ready' \
+  RUNTIME_STUB_TARGETS_JSON='[
+    {"id":"page-example","type":"page","url":"https://example.com/protected"}
+  ]' \
+  AGENT_BROWSER_RUNTIME_HELPER="$TMP_DIR/runtime-stub.sh" \
+  AGENT_BROWSER_SELECT_TARGET_HELPER="$TMP_DIR/runtime-stub.sh" \
+    "$BASE_DIR/assist-lan-session.sh" capture \
+      --run-dir "$run_root" \
+      --origin "https://example.com" \
+      --target-url "https://example.com/protected" \
+      --session-key default \
+      --profile-dir "$profile_dir" \
+      --manifest-root "$manifest_root"
+)"
+
+assert_json_has_fields "$capture_output" status next_action operator_required operator_url lan_novnc_url capture_completed
+assert_json_value "$capture_output" status ready
+assert_json_value "$capture_output" next_action none
+assert_json_value "$capture_output" operator_required false
+assert_json_value "$capture_output" capture_completed true
+assert_json_value "$capture_output" operator_url "http://192.168.1.44:6084/vnc.html?autoconnect=1&resize=remote"
 
 python3 - "$manifest_root" "$profile_dir" "$HOME/.agent-browser" <<'PY'
 import json
@@ -339,7 +391,12 @@ assert identity["providers"]["example.com"]["profile_dir"] == profile_dir, ident
 assert not (manifest_root / "index" / "identity-profiles.json").exists()
 PY
 
-"$BASE_DIR/assist-lan-session.sh" stop --run-dir "$run_root" >/dev/null
+stop_output="$("$BASE_DIR/assist-lan-session.sh" stop --run-dir "$run_root")"
+assert_json_has_fields "$stop_output" status next_action operator_required assisted_session_stopped
+assert_json_value "$stop_output" status stopped
+assert_json_value "$stop_output" next_action none
+assert_json_value "$stop_output" operator_required false
+assert_json_value "$stop_output" assisted_session_stopped true
 [ ! -f "$run_root/x11vnc.pid" ]
 [ ! -f "$run_root/websockify.pid" ]
 [ ! -f "$run_root/assist.env" ]

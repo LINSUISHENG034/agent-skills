@@ -5,6 +5,7 @@
   - Browser-route success is now based on target-page correctness rather than runtime startup alone
   - Wrong-page drift gets one local in-session recovery attempt before assisted escalation
   - Assisted handoff is LAN-only and remains alive after `open-host-page.sh` returns blocked-state handoff payload
+  - Agent-facing entrypoints now use an explicit JSON output contract: `status`, `next_action`, and `operator_required` are always present; blocked handoff also includes `operator_url`, `blocking_reason`, `resume_command`, and `message_for_agent`
   - Assisted `capture` now rejects challenge/login-wall/off-target final pages before writing reusable state
   - Successful assisted `capture` writes:
     - manifest state at `--manifest-root`
@@ -31,6 +32,7 @@
   - Scope/contract verification covers successor public rules, LAN-only wording, and protected-route discipline
   - Runtime verification covers `select-target`, `check-page`, `verify`, stale-lock cleanup, and auto-picked CDP/display values
   - Integrated entrypoint verification covers runtime reuse, target selection, `ready` / `challenge` / `login-wall` / `target-mismatch`, one wrong-page recovery attempt, and assisted handoff persistence
+  - Assisted entrypoint verification covers JSON handoff payloads for `start|status|capture|stop` so agents no longer need to infer next steps from loose text lines
   - Assisted capture verification covers challenge/login-wall/off-origin/wrong-target rejection plus identity metadata reuse
   - Result-page extraction verification now uses browser-backed fixtures instead of source-only smoke checks
 - Real-host / OpenClaw gate on 2026-04-02:

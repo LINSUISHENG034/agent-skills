@@ -182,7 +182,19 @@ case "${1:-}" in
       echo "assisted start failed" >&2
       exit 41
     fi
-    printf 'lan_novnc_url: %s\n' "${ASSIST_LAN_URL_RESPONSE:-http://192.168.1.44:6084/vnc.html?autoconnect=1&resize=remote}"
+    python3 - "${ASSIST_LAN_URL_RESPONSE:-http://192.168.1.44:6084/vnc.html?autoconnect=1&resize=remote}" <<'PY'
+import json
+import sys
+
+url = sys.argv[1]
+print(json.dumps({
+    "status": "needs-user",
+    "next_action": "open-novnc",
+    "operator_required": True,
+    "operator_url": url,
+    "lan_novnc_url": url,
+}))
+PY
     ;;
   capture)
     echo "capture should not be called by open-host-page assisted handoff" >&2
@@ -250,6 +262,23 @@ assert sys.argv[2] not in data, data
 PY
 }
 
+assert_json_contains() {
+  local payload="$1"
+  local field="$2"
+  local expected_substring="$3"
+  python3 - "$payload" "$field" "$expected_substring" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+field = sys.argv[2]
+expected = sys.argv[3]
+actual = data.get(field, "")
+assert isinstance(actual, str), data
+assert expected in actual, data
+PY
+}
+
 assert_start_count() {
   local tmp="$1"
   local expected="$2"
@@ -295,7 +324,11 @@ run_lightweight() {
   assert_json_value "$output" reason latest-info
   assert_json_value "$output" needs_browser false
   assert_json_value "$output" origin https://public.example
+  assert_json_value "$output" status ready
+  assert_json_value "$output" next_action none
+  assert_json_value "$output" operator_required false
   assert_json_missing_field "$output" run_dir
+  assert_json_missing_field "$output" operator_url
   grep -q 'route:--latest' "$tmp/actions.log"
   ! grep -q '^profile:' "$tmp/actions.log"
   ! grep -q '^runtime:' "$tmp/actions.log"
@@ -356,7 +389,7 @@ run_browser_path() {
       --run-dir "$tmp/browser-run"
   )"
 
-  assert_json_has_fields "$output" route reason needs_browser origin run_dir profile_dir runtime_status page_status target_id recovery_attempted
+  assert_json_has_fields "$output" route reason needs_browser origin status next_action operator_required run_dir profile_dir runtime_status page_status target_id recovery_attempted
   assert_json_value "$output" route browser
   assert_json_value "$output" reason interaction-required
   assert_json_value "$output" needs_browser true
@@ -367,7 +400,11 @@ run_browser_path() {
   assert_json_value "$output" page_status ready
   assert_json_value "$output" target_id page-dashboard
   assert_json_value "$output" recovery_attempted false
+  assert_json_value "$output" status ready
+  assert_json_value "$output" next_action none
+  assert_json_value "$output" operator_required false
   assert_json_missing_field "$output" lan_novnc_url
+  assert_json_missing_field "$output" operator_url
   grep -q 'route:--interactive' "$tmp/actions.log"
   grep -q 'profile:resolve --root ' "$tmp/actions.log"
   grep -q -- '--origin https://protected.example' "$tmp/actions.log"
@@ -412,6 +449,9 @@ run_verify_failure_reuses_running_runtime() {
   assert_json_value "$output" runtime_status running
   assert_json_value "$output" page_status ready
   assert_json_value "$output" recovery_attempted false
+  assert_json_value "$output" status ready
+  assert_json_value "$output" next_action none
+  assert_json_value "$output" operator_required false
   ! grep -q '^runtime:start ' "$tmp/actions.log"
   ! grep -q '^assist:' "$tmp/actions.log"
 }
@@ -444,6 +484,9 @@ run_normalized_target_url_is_ready() {
 
   assert_json_value "$output" page_status ready
   assert_json_value "$output" recovery_attempted false
+  assert_json_value "$output" status ready
+  assert_json_value "$output" next_action none
+  assert_json_value "$output" operator_required false
   assert_start_count "$tmp" 0
   assert_navigate_count "$tmp" 0
   ! grep -q '^assist:' "$tmp/actions.log"
@@ -475,13 +518,20 @@ run_assist_path_challenge() {
       --run-dir "$tmp/assist-run"
   )"
 
-  assert_json_has_fields "$output" route reason needs_browser origin run_dir profile_dir runtime_status page_status target_id recovery_attempted assisted_session lan_novnc_url
+  assert_json_has_fields "$output" route reason needs_browser origin status next_action operator_required run_dir profile_dir runtime_status page_status target_id recovery_attempted assisted_session lan_novnc_url operator_url blocking_reason resume_command message_for_agent
   assert_json_value "$output" runtime_status running
   assert_json_value "$output" page_status challenge
   assert_json_value "$output" target_id page-login
   assert_json_value "$output" recovery_attempted false
+  assert_json_value "$output" status needs-user
+  assert_json_value "$output" next_action open-novnc
+  assert_json_value "$output" operator_required true
   assert_json_value "$output" assisted_session true
   assert_json_value "$output" lan_novnc_url "http://192.168.1.77:6084/vnc.html?autoconnect=1&resize=remote"
+  assert_json_value "$output" operator_url "http://192.168.1.77:6084/vnc.html?autoconnect=1&resize=remote"
+  assert_json_value "$output" blocking_reason challenge
+  assert_json_contains "$output" resume_command "assist-lan-session.sh capture"
+  assert_json_contains "$output" message_for_agent "Stop autonomous browsing."
   grep -q '^assist:start ' "$tmp/actions.log"
   grep -q '^assist:start .*--target-url https://protected.example/dashboard' "$tmp/actions.log"
   ! grep -q '^assist:capture ' "$tmp/actions.log"
@@ -515,13 +565,20 @@ run_assist_path_login_wall() {
       --run-dir "$tmp/assist-login-run"
   )"
 
-  assert_json_has_fields "$output" route reason needs_browser origin run_dir profile_dir runtime_status page_status target_id recovery_attempted assisted_session lan_novnc_url
+  assert_json_has_fields "$output" route reason needs_browser origin status next_action operator_required run_dir profile_dir runtime_status page_status target_id recovery_attempted assisted_session lan_novnc_url operator_url blocking_reason resume_command message_for_agent
   assert_json_value "$output" runtime_status running
   assert_json_value "$output" page_status login-wall
   assert_json_value "$output" target_id page-login
   assert_json_value "$output" recovery_attempted false
+  assert_json_value "$output" status needs-user
+  assert_json_value "$output" next_action open-novnc
+  assert_json_value "$output" operator_required true
   assert_json_value "$output" assisted_session true
   assert_json_value "$output" lan_novnc_url "http://192.168.1.55:6084/vnc.html?autoconnect=1&resize=remote"
+  assert_json_value "$output" operator_url "http://192.168.1.55:6084/vnc.html?autoconnect=1&resize=remote"
+  assert_json_value "$output" blocking_reason login-wall
+  assert_json_contains "$output" resume_command "assist-lan-session.sh capture"
+  assert_json_contains "$output" message_for_agent "open operator_url"
   grep -q '^assist:start ' "$tmp/actions.log"
   grep -q '^assist:start .*--target-url https://protected.example/dashboard' "$tmp/actions.log"
   ! grep -q '^assist:capture ' "$tmp/actions.log"
@@ -559,6 +616,9 @@ run_wrong_page_recovery_success() {
   assert_json_value "$output" page_status ready
   assert_json_value "$output" recovery_attempted true
   assert_json_value "$output" target_id page-dashboard
+  assert_json_value "$output" status ready
+  assert_json_value "$output" next_action none
+  assert_json_value "$output" operator_required false
   ! grep -q '^assist:' "$tmp/actions.log"
   assert_start_count "$tmp" 0
   assert_navigate_count "$tmp" 1
@@ -592,12 +652,19 @@ run_wrong_page_recovery_assisted() {
       --run-dir "$tmp/recovery-assist-run"
   )"
 
-  assert_json_has_fields "$output" page_status recovery_attempted assisted_session lan_novnc_url
+  assert_json_has_fields "$output" page_status recovery_attempted assisted_session lan_novnc_url status next_action operator_required operator_url blocking_reason resume_command message_for_agent
   assert_json_value "$output" page_status target-mismatch
   assert_json_value "$output" recovery_attempted true
   assert_json_value "$output" target_id page-dashboard
+  assert_json_value "$output" status needs-user
+  assert_json_value "$output" next_action open-novnc
+  assert_json_value "$output" operator_required true
   assert_json_value "$output" assisted_session true
   assert_json_value "$output" lan_novnc_url "http://192.168.1.99:6084/vnc.html?autoconnect=1&resize=remote"
+  assert_json_value "$output" operator_url "http://192.168.1.99:6084/vnc.html?autoconnect=1&resize=remote"
+  assert_json_value "$output" blocking_reason target-mismatch
+  assert_json_contains "$output" resume_command "assist-lan-session.sh capture"
+  assert_json_contains "$output" message_for_agent "complete the required interaction"
   assert_start_count "$tmp" 0
   assert_navigate_count "$tmp" 1
   grep -q '^page-ops:.*--navigate https://protected.example/dashboard' "$tmp/actions.log"
