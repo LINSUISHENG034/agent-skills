@@ -12,6 +12,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 
 $runtimeDirResolved = [System.IO.Path]::GetFullPath($RuntimeDir)
 $venvPython = Join-Path $runtimeDirResolved ".venv\Scripts\python.exe"
@@ -43,12 +44,22 @@ if ($Language) {
     $args += @("--language", $Language)
 }
 
-if ($WantJson -or $Timestamps) {
-    $args += @("--json-out", $jsonOut)
-}
+$args += @("--json-out", $jsonOut)
 
 if ($Timestamps) {
     $args += "--timestamps"
 }
 
 & $venvPython @args
+$pythonExit = $LASTEXITCODE
+
+if (Test-Path $jsonOut) {
+    Get-Content -Raw $jsonOut
+    exit 0
+}
+
+if ($pythonExit -ne 0) {
+    exit $pythonExit
+}
+
+exit $pythonExit

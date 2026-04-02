@@ -16,6 +16,7 @@ SSH_KEY_INSTALL_SCRIPT = ROOT / "scripts" / "install-node-whisper-ssh-key.ps1"
 SKILL_FILE = ROOT / "SKILL.md"
 BOOTSTRAP_REF = ROOT / "references" / "bootstrap.md"
 BROKEN_VALIDATION_SCRIPT = ROOT / "scripts" / "run-node-whisper-large-v3-validation.sh"
+REMOTE_JOB_SCRIPT = ROOT / "scripts" / "run-node-whisper-job.ps1"
 
 
 class NodeWhisperCliTests(unittest.TestCase):
@@ -305,6 +306,237 @@ raise SystemExit(args.exit_code)
                 """#!/usr/bin/env bash
 set -euo pipefail
 printf '{"ok": true, "stage": "done"}\n'
+""",
+            )
+
+            env = os.environ.copy()
+            env["PATH"] = f"{root}:{env.get('PATH', '')}"
+            env["NODE_WHISPER_ENV_FILE"] = str(root / "missing.env")
+            env["NODE_WHISPER_REMOTE_USER"] = "stub-user"
+            env["NODE_WHISPER_REMOTE_HOST"] = "stub-host"
+            env["NODE_WHISPER_SSH_KEY"] = str(ssh_key)
+            env["NODE_WHISPER_VALIDATE_INPUT_HELPER"] = str(validate_stub)
+            env["NODE_WHISPER_REQUIRE_READY_HELPER"] = str(ready_stub)
+            env["NODE_WHISPER_STAGE_MEDIA_HELPER"] = str(stage_stub)
+            env["NODE_WHISPER_FETCH_RESULTS_HELPER"] = str(fetch_stub)
+            env["NODE_WHISPER_ERROR_MAP_HELPER"] = str(error_map_stub)
+
+            yield media, env
+
+    @contextmanager
+    def stubbed_empty_remote_stdout_runtime(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            media = root / "clip.wav"
+            media.write_text("fake media placeholder", encoding="utf-8")
+            ssh_key = root / "node_whisper_test_key"
+            ssh_key.write_text("not-a-real-key", encoding="utf-8")
+
+            validate_stub = root / "validate.sh"
+            ready_stub = root / "ready.sh"
+            stage_stub = root / "stage.sh"
+            fetch_stub = root / "fetch.sh"
+            error_map_stub = root / "error_map.py"
+            ssh_stub = root / "ssh"
+
+            self.write_executable(
+                validate_stub,
+                """#!/usr/bin/env bash
+set -euo pipefail
+output_dir=""
+input_path=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output-dir)
+      output_dir="${2:-}"
+      shift 2
+      ;;
+    --model|--language|--node|--transport)
+      shift 2
+      ;;
+    --json|--timestamps|--quiet|--force-repair|--dry-run)
+      shift
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      if [[ -z "$input_path" ]]; then
+        input_path="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+if [[ -z "$output_dir" ]]; then
+  output_dir="$(dirname "$input_path")"
+fi
+input_name="$(basename "$input_path")"
+input_stem="${input_name%.*}"
+python3 - <<'PY' "$input_path" "$input_stem" "$output_dir"
+import json
+import sys
+input_path, input_stem, output_dir = sys.argv[1:]
+print(json.dumps({
+    "ok": True,
+    "stage": "input",
+    "input_path": input_path,
+    "input_name": input_stem + ".wav",
+    "input_stem": input_stem,
+    "input_extension": ".wav",
+    "media_kind": "audio",
+    "output_format": "text",
+    "model": "large-v3",
+    "language": None,
+    "node_name": None,
+    "output_dir": output_dir,
+    "transport": "ssh",
+    "want_json": False,
+    "timestamps": False,
+    "quiet": False,
+    "force_repair": False,
+    "dry_run": False,
+    "fallback_provider": None,
+    "fallback_config": None,
+}))
+PY
+""",
+            )
+
+            self.write_executable(
+                ready_stub,
+                """#!/usr/bin/env bash
+set -euo pipefail
+python3 - <<'PY'
+import json
+print(json.dumps({
+    "ok": True,
+    "stage": "ready",
+    "transport": "ssh",
+    "node_name": None,
+    "remote_user": "stub-user",
+    "remote_host": "stub-host",
+    "runtime_dir": "C:/node-whisper-runtime",
+    "runtime_repaired": False,
+}))
+PY
+""",
+            )
+
+            self.write_executable(
+                stage_stub,
+                """#!/usr/bin/env bash
+set -euo pipefail
+output_dir=""
+input_stem=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output-dir)
+      output_dir="${2:-}"
+      shift 2
+      ;;
+    --input-stem)
+      input_stem="${2:-}"
+      shift 2
+      ;;
+    --input|--transport)
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+python3 - <<'PY' "$output_dir" "$input_stem"
+import json
+import sys
+output_dir, input_stem = sys.argv[1:]
+print(json.dumps({
+    "ok": True,
+    "stage": "stage",
+    "job_id": "job-empty-stdout",
+    "runtime_dir": "C:/node-whisper-runtime",
+    "remote_input_path": "C:/node-whisper-runtime/jobs/input.wav",
+    "remote_text_out": "C:/node-whisper-runtime/jobs/transcript.txt",
+    "remote_json_out": "C:/node-whisper-runtime/jobs/transcript.json",
+    "output_dir": output_dir,
+    "input_stem": input_stem,
+    "want_json": False,
+}))
+PY
+""",
+            )
+
+            self.write_executable(
+                fetch_stub,
+                """#!/usr/bin/env bash
+set -euo pipefail
+output_dir=""
+input_stem=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output-dir)
+      output_dir="${2:-}"
+      shift 2
+      ;;
+    --input-stem)
+      input_stem="${2:-}"
+      shift 2
+      ;;
+    --remote-text-out|--remote-json-out)
+      shift 2
+      ;;
+    --want-json)
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+mkdir -p "$output_dir"
+local_text_out="${output_dir}/${input_stem}.node-whisper.txt"
+printf 'remote stdout gap transcript\n' > "$local_text_out"
+python3 - <<'PY' "$local_text_out"
+import json
+import sys
+print(json.dumps({
+    "stage": "fetch",
+    "local_text_out": sys.argv[1],
+    "local_json_out": None,
+}))
+PY
+""",
+            )
+
+            self.write_executable(
+                error_map_stub,
+                """#!/usr/bin/env python3
+import argparse
+import json
+import sys
+parser = argparse.ArgumentParser()
+parser.add_argument("--stage", required=True)
+parser.add_argument("--error-code", required=True)
+parser.add_argument("--message", required=True)
+parser.add_argument("--exit-code", required=True, type=int)
+args = parser.parse_args()
+print(json.dumps({
+    "ok": False,
+    "stage": args.stage,
+    "error_code": args.error_code,
+    "message": args.message,
+    "exit_code": args.exit_code,
+}))
+raise SystemExit(args.exit_code)
+""",
+            )
+
+            self.write_executable(
+                ssh_stub,
+                """#!/usr/bin/env bash
+set -euo pipefail
+exit 0
 """,
             )
 
@@ -681,6 +913,21 @@ print(json.dumps({
         self.assertEqual(result.stdout, "fallback transcript\n")
         self.assertIn("node-whisper[fallback]:", result.stderr)
         self.assertIn("engine=fallback:http-generic", result.stderr)
+
+    def test_empty_remote_stdout_with_success_exit_still_fetches_transcript(self) -> None:
+        with self.stubbed_empty_remote_stdout_runtime() as (media, env):
+            result = self.run_orchestrator(str(media), env=env)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "remote stdout gap transcript\n")
+        self.assertIn("node-whisper[fetch]:", result.stderr)
+        self.assertIn("engine=node-whisper-remote", result.stderr)
+
+    def test_remote_job_script_replays_json_payload_on_success(self) -> None:
+        script = REMOTE_JOB_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('$ProgressPreference = "SilentlyContinue"', script)
+        self.assertIn("Get-Content -Raw $jsonOut", script)
+        self.assertIn("exit 0", script)
 
 
 if __name__ == "__main__":

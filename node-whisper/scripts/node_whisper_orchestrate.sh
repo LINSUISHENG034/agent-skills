@@ -256,15 +256,17 @@ remote_exec_json="$(ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=accept-new \
   "${remote_exec_cmd[@]}" 2>/dev/null)" || \
   fail "transcribe" "transcription_failed" "Remote transcription failed on ${remote_host}." 15
 
-remote_ok="$("$PYTHON_BIN" -c 'import json,sys
+if [[ -n "${remote_exec_json//[[:space:]]/}" ]]; then
+  remote_ok="$("$PYTHON_BIN" -c 'import json,sys
 try:
     data=json.load(sys.stdin)
 except Exception:
     print("false")
 else:
     print("true" if data.get("ok") else "false")' <<<"$remote_exec_json")"
-if [[ "$remote_ok" != "true" ]]; then
-  fail "transcribe" "transcription_failed" "Remote transcription did not report ok=true on ${remote_host}." 15
+  if [[ "$remote_ok" != "true" ]]; then
+    fail "transcribe" "transcription_failed" "Remote transcription did not report ok=true on ${remote_host}." 15
+  fi
 fi
 
 fetch_args=(
