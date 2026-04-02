@@ -2,10 +2,14 @@
 name: ubuntu-browser-session
 description: Use when a request needs a real Ubuntu Server browser session with durable site login reuse, bounded manual login recovery, or host-side page inspection for protected sites.
 metadata:
-  version: 1.0.3
+  version: 1.0.4
+  status: deprecated
+  replaced_by: host-web-access
 ---
 
 # Ubuntu Browser Session
+
+Deprecated: use `host-web-access` for new Ubuntu-host browser workflows. This skill remains published for compatibility with existing callers and historical references.
 
 Use the Ubuntu host browser like a long-lived local browser for the agent.
 

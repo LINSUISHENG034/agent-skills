@@ -8,6 +8,7 @@ This repository is for publishable skills plus local-only development support fi
 - Move complete but non-redistributable skills under `restricted/`.
 - Promote a skill to the repository root only when it is ready to publish.
 - Keep published root-level skills portable and redistributable.
+- Root-level published skills may be `active` or `deprecated`; both remain publishable, while deprecated skills must declare their replacement when one exists.
 - Reuse existing scripts and references where practical instead of duplicating workflows across skills.
 - Treat `drafts/` as a separate local-only Git repository for draft commits, branches, and worktrees.
 - Treat `restricted/` as a separate local-only Git repository for completed but non-publishable skills.
@@ -24,6 +25,7 @@ This repository is for publishable skills plus local-only development support fi
 - Prefer executable workflows in `scripts/` over long manual command blocks repeated in Markdown.
 - Design skills to compose with other skills, MCP tools, and external companion skills instead of assuming they run alone.
 - Keep published skills portable across hosts and agent environments; avoid hardcoded machine-specific paths, accounts, or local secrets.
+- For backward compatibility, treat a published root-level skill without explicit `metadata.status` as `active`; use explicit status for new promotions and deprecations.
 - Validate the smallest end-to-end workflow before promoting a draft skill to the repository root.
 
 ## Local Development Docs
@@ -78,6 +80,7 @@ Before push or publish:
 - verify that `docs/plans/` and `docs/issues/` are absent from staged changes
 - verify that `drafts/` and `restricted/` are absent from staged changes in the main repository
 - verify that new root-level skills are complete and publishable
+- verify that deprecated root-level skills remain redistributable and point to their replacement in metadata and opening guidance
 - verify that local secrets, runtime state, and host-specific notes remain untracked
 
 ## Version and Sync
@@ -85,6 +88,7 @@ Before push or publish:
 This repository is the single source of truth for skill content. ClawHub is the versioned distribution channel.
 
 - Track the current version in each published skill's SKILL.md frontmatter under `metadata.version`.
+- Track publish state in root-level skills with `metadata.status` when promoting or deprecating a skill.
 - Bump `metadata.version` before running `clawhub sync` or `clawhub publish`.
 - The change flow is one-directional: repository → ClawHub registry → `~/.openclaw/skills/` managed copy.
 - Do not publish directly from `~/.openclaw/skills/`; always publish from the repository.

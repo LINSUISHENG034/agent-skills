@@ -1,0 +1,60 @@
+# Validation Findings
+
+- Successor iteration status:
+  - `open-host-page.sh` now keeps the top-level `route` / `reason` / `needs_browser` contract while adding browser-path state such as `runtime_status`, `page_status`, `target_id`, and `recovery_attempted`
+  - Browser-route success is now based on target-page correctness rather than runtime startup alone
+  - Wrong-page drift gets one local in-session recovery attempt before assisted escalation
+  - Assisted handoff is LAN-only and remains alive after `open-host-page.sh` returns blocked-state handoff payload
+  - Assisted `capture` now rejects challenge/login-wall/off-target final pages before writing reusable state
+  - Successful assisted `capture` writes:
+    - manifest state at `--manifest-root`
+    - site-session registry under the main skill root
+    - identity metadata under the main skill root
+  - `host-page-snapshot.py --format topic-links` now uses generic result-page heuristics with behavior-level browser-backed regression tests
+- Local verification commands executed successfully for the promoted root skill on 2026-04-02:
+  - `bash host-web-access/scripts/test_runtime_common.sh`
+  - `bash host-web-access/scripts/test_session_manifest.sh`
+  - `bash host-web-access/scripts/test_site_session_registry.sh`
+  - `bash host-web-access/scripts/test_profile_resolution.sh`
+  - `bash host-web-access/scripts/test_browser_runtime.sh`
+  - `bash host-web-access/scripts/test_assist_lan_session.sh`
+  - `bash host-web-access/scripts/test_identity_provider_reuse.sh`
+  - `bash host-web-access/scripts/test_host_page_ops.sh`
+  - `bash host-web-access/scripts/test_host_page_snapshot.sh`
+  - `bash host-web-access/scripts/test_route_web_task.sh`
+  - `bash host-web-access/scripts/test_open_host_page.sh`
+  - `bash host-web-access/scripts/test_skill_scope.sh`
+  - `python3 -m py_compile host-web-access/scripts/host-cdp-core.py`
+  - `python3 -m py_compile host-web-access/scripts/host-page-ops.py`
+  - `python3 -m py_compile host-web-access/scripts/host-page-snapshot.py`
+- Coverage highlights:
+  - Scope/contract verification covers successor public rules, LAN-only wording, and protected-route discipline
+  - Runtime verification covers `select-target`, `check-page`, `verify`, stale-lock cleanup, and auto-picked CDP/display values
+  - Integrated entrypoint verification covers runtime reuse, target selection, `ready` / `challenge` / `login-wall` / `target-mismatch`, one wrong-page recovery attempt, and assisted handoff persistence
+  - Assisted capture verification covers challenge/login-wall/off-origin/wrong-target rejection plus identity metadata reuse
+  - Result-page extraction verification now uses browser-backed fixtures instead of source-only smoke checks
+- Real-host / OpenClaw gate on 2026-04-02:
+  - Managed copy sync:
+    - `rsync -a --delete --exclude '__pycache__/' --exclude '.pytest_cache/' --exclude '*.pyc' host-web-access/ ~/.openclaw/skills/host-web-access/`
+    - Follow-up diff after clearing both `scripts/__pycache__/` trees: no file differences between `host-web-access/` and `~/.openclaw/skills/host-web-access/`
+  - OpenClaw command run 1:
+    - `openclaw agent --agent main --json --message "Use host-web-access to open https://github.com/settings/profile with the default host session. Report whether the result is ready, needs-user, challenge, or login-wall, and include the final page URL."`
+    - Result: `login-wall`
+    - Final URL: `https://github.com/login?return_to=https%3A%2F%2Fgithub.com%2Fsettings%2Fprofile`
+    - Runtime detail: `assisted_session: true`, browser runtime remained available for recovery
+  - OpenClaw command run 2:
+    - `openclaw agent --agent main --json --message "Use host-web-access to open https://myaccount.google.com/ with the default host session. Report whether the result is ready, needs-user, challenge, or login-wall, and include the final page URL."`
+    - Result: `ready`
+    - Final URL: `https://myaccount.google.com/`
+    - Runtime detail: page title `Google Account`, logged-in account `linsuisheng034@gmail.com`
+  - Session log confirmation:
+    - The main-agent session log `~/.openclaw/agents/main/sessions/65340af6-74c1-4ba8-b034-855355168bda.jsonl` shows reads from `~/.openclaw/skills/host-web-access/SKILL.md`
+    - The same log shows tool execution against `~/.openclaw/skills/host-web-access/scripts/open-host-page.sh`
+- Current gate decision:
+  - Local root-skill verification: PASS
+  - Real-host / managed-copy successor verification: PASS
+  - Promotion to repository root: PASS
+  - README / `ubuntu-browser-session` successor handoff changes: PASS
+- Residual risk:
+  - In the OpenClaw `systemPromptReport.skills.entries` block, `host-web-access` is still not listed alongside injected skill metadata even though explicit managed-copy execution succeeded
+  - That discoverability gap is worth tracking separately, but it no longer blocks repository-root promotion because the managed copy, session log, and concrete protected-target outcomes now validate the promoted skill

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Host Web Access"
+  short_description: "Ubuntu-host web routing and browser session workflow"
+  default_prompt: "Use $host-web-access for public web tasks and Ubuntu host browser tasks."

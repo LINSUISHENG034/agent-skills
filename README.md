@@ -11,15 +11,17 @@ Each skill lives in its own directory and typically contains:
 - `scripts/`
 - optional UI metadata such as `agents/openai.yaml`
 
-Published skills live at the repository root. Unfinished skills stay under `drafts/` and are ignored by git until they are ready to be promoted.
+Published skills live at the repository root. Root-level published skills may be actively maintained or deprecated, but they must remain redistributable.
+For backward compatibility, a root-level skill without explicit `metadata.status` is treated as `active`.
+Unfinished skills stay under `drafts/` and are ignored by git until they are ready to be promoted.
 Completed but non-redistributable skills stay under `restricted/` and are also ignored by the main repository.
 Maintainer-facing reference material lives under `docs/`.
 Local-only third-party skill sources live under `third_party/`.
 
-## Current Skills
+## Active Skills
 
-- `ubuntu-browser-session`
-  - Standalone Ubuntu Server browser workflow for protected sites, live session reuse, challenge recovery, and noVNC-assisted session capture.
+- `host-web-access`
+  - Preferred Ubuntu-host web access workflow for public search/fetch routing, protected-site session reuse, assisted recovery, and host-side page interaction.
 - `deployment-host-diagnostics`
   - Host-side diagnostics for OpenClaw deployments using live command-backed evidence and layered troubleshooting.
 - `qwen3-asr-transcribe`
@@ -29,13 +31,18 @@ Local-only third-party skill sources live under `third_party/`.
 - `node-whisper`
   - SSH-backed LAN Windows GPU transcription workflow for local audio or video files, with automatic runtime probe and repair.
 
+## Deprecated Skills
+
+- `ubuntu-browser-session`
+  - Deprecated compatibility skill retained for existing users; use `host-web-access` for new host-browser workflows.
+
 ## Draft Skills
 
 Drafts are kept under `drafts/` and are intentionally excluded from the main repository history.
 
 - Move an unfinished skill into `drafts/` to keep it in the same workspace without publishing it.
 - Promote a skill by moving it from `drafts/<skill-name>/` to the repository root and removing any local-only files.
-- Root-level skills should be publishable; `drafts/` skills may be incomplete, experimental, or locally tied to one environment.
+- Root-level skills should be publishable, with `active` or `deprecated` status; `drafts/` skills may be incomplete, experimental, or locally tied to one environment.
 
 ### Local Draft Repository
 
@@ -121,6 +128,7 @@ bash scripts/update-third-party-repos.sh --pull
 Before pushing publicly, keep this repository limited to material that can be safely redistributed:
 
 - Publish skills, helper scripts, and maintainer-written documentation
+- Keep deprecated root-level skills publishable and clearly marked with their replacement when one exists
 - Keep secrets, local runtimes, private keys, and environment files untracked
 - Keep unfinished skills under `drafts/`
 - Keep completed but non-redistributable skills under `restricted/`
@@ -144,7 +152,9 @@ npx clawhub@latest install agent-browser
 
 ## Skill Handoff
 
-`ubuntu-browser-session` is the canonical public name for the former `agent-browser-ubuntu-server` skill. It owns host-side browser session discovery, reuse, assisted login, and page verification inside one workflow.
+`host-web-access` is the preferred public entry point for Ubuntu-host browser access. It owns public search/fetch routing plus host-side browser session discovery, reuse, assisted login recovery, and page verification inside one workflow.
+
+`ubuntu-browser-session` remains published only as a deprecated compatibility skill for existing callers and historical references.
 
 Use an external browser-interaction companion such as `agent-browser` only when:
 
@@ -155,7 +165,7 @@ Use an external browser-interaction companion such as `agent-browser` only when:
 Quick rule:
 
 - "I need to interact with a web page" -> use an installed browser-interaction skill such as `agent-browser`
-- "I need to establish or recover a host-side logged-in browser first" -> `ubuntu-browser-session`
+- "I need to establish or recover a host-side logged-in browser first" -> `host-web-access`
 
 ## Local-Only Files
 
@@ -177,3 +187,4 @@ If a skill needs local credentials or runtime state, keep them beside the skill 
 - Prefer portable placeholders or local configuration files over hardcoded secrets.
 - Use `drafts/` when a whole skill is not ready for release.
 - Use `restricted/` when a whole skill is complete locally but cannot be published from this repository.
+- Keep deprecated but still publishable skills at the repository root, and mark the replacement in `SKILL.md` metadata and opening guidance.
