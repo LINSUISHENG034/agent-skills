@@ -16,6 +16,12 @@ Options:
   --json                 Also fetch JSON output
   --timestamps           Include segment timestamps; implies --json
   --quiet                Keep stdout reserved for transcript text
+  --fallback-provider <name>
+                         Explicit fallback provider to use if the remote path
+                         fails at an eligible stage
+  --fallback-config <path>
+                         Optional JSON config file for the selected fallback
+                         provider
   --node <name>          Preferred OpenClaw node name or id
   --force-repair         Reinstall/repair runtime before transcribing
   --transport <name>     Transport mode: ssh or node-host (default: ssh)
@@ -47,6 +53,8 @@ force_repair=0
 dry_run=0
 transport="${NODE_WHISPER_TRANSPORT:-ssh}"
 node_name="${NODE_WHISPER_NODE_NAME:-}"
+fallback_provider=""
+fallback_config=""
 output_dir=""
 input_path=""
 
@@ -72,6 +80,14 @@ while [[ $# -gt 0 ]]; do
     --quiet)
       quiet=1
       shift
+      ;;
+    --fallback-provider)
+      fallback_provider="${2:-}"
+      shift 2
+      ;;
+    --fallback-config)
+      fallback_config="${2:-}"
+      shift 2
       ;;
     --node)
       node_name="${2:-}"
@@ -159,12 +175,16 @@ else
   output_dir="$("$PYTHON_BIN" -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$output_dir")"
 fi
 
+if [[ -n "$fallback_config" ]]; then
+  fallback_config="$("$PYTHON_BIN" -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$fallback_config")"
+fi
+
 output_format="text"
 if [[ "$want_json" -eq 1 ]]; then
   output_format="text+json"
 fi
 
-"$PYTHON_BIN" - <<'PY' "$abs_input" "$input_name" "$input_stem" "$input_ext" "$media_kind" "$output_format" "$model" "$language" "$node_name" "$output_dir" "$transport" "$want_json" "$timestamps" "$quiet" "$force_repair" "$dry_run"
+"$PYTHON_BIN" - <<'PY' "$abs_input" "$input_name" "$input_stem" "$input_ext" "$media_kind" "$output_format" "$model" "$language" "$node_name" "$output_dir" "$transport" "$want_json" "$timestamps" "$quiet" "$force_repair" "$dry_run" "$fallback_provider" "$fallback_config"
 import json
 import sys
 
@@ -185,6 +205,8 @@ import sys
     quiet,
     force_repair,
     dry_run,
+    fallback_provider,
+    fallback_config,
 ) = sys.argv[1:]
 
 payload = {
@@ -206,6 +228,8 @@ payload = {
     "quiet": quiet == "1",
     "force_repair": force_repair == "1",
     "dry_run": dry_run == "1",
+    "fallback_provider": fallback_provider or None,
+    "fallback_config": fallback_config or None,
 }
 print(json.dumps(payload, ensure_ascii=False))
 PY

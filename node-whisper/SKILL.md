@@ -29,6 +29,14 @@ Add flags as needed:
   --model large-v3
 ```
 
+Fallback is explicit, not automatic. If you want a local fallback path when the
+Windows node cannot pass the ready gate, pass a provider name:
+
+```bash
+{baseDir}/scripts/node_whisper_orchestrate.sh /path/to/media.mp4 \
+  --fallback-provider http-generic
+```
+
 The wrapper owns:
 
 1. input validation
@@ -42,6 +50,10 @@ Transcript text stays on stdout. Operational noise and summaries stay on stderr.
 Default runs also emit coarse phase markers on stderr for `validate`, `ready`,
 `stage`, `transcribe`, and `fetch`. `--quiet` suppresses those progress
 markers and keeps stderr reserved for errors only.
+
+When fallback is used, stderr summaries identify the actual engine explicitly:
+- `engine=node-whisper-remote` for the Windows GPU path
+- `engine=fallback:<provider>` for an explicit local fallback provider
 
 ## Local Config
 
@@ -92,6 +104,8 @@ fits the remote-node model:
 - `--json`
 - `--timestamps`
 - `--quiet`
+- `--fallback-provider`
+- `--fallback-config`
 
 ## Runtime Contract
 
@@ -112,11 +126,30 @@ published hardcoded defaults.
 
 1. Validate one local media input path.
 2. Probe the remote Windows node for `uv`, Python, `ffmpeg`, and `nvidia-smi`.
-3. Run install or repair automatically if the runtime is not yet healthy.
-4. Re-run the smoke test as the confidence gate after repair.
-5. Create a remote job directory and copy the local media there.
-6. Run `faster-whisper` on the Windows GPU node.
-7. Fetch transcript text and optional JSON back to the local host.
+3. If an explicit fallback provider was requested and the ready gate fails with
+   `node_unreachable` or `node_runtime_repair_failed`, switch to the configured
+   local fallback provider.
+4. Otherwise run install or repair automatically if the runtime is not yet healthy.
+5. Re-run the smoke test as the confidence gate after repair.
+6. Create a remote job directory and copy the local media there.
+7. Run `faster-whisper` on the Windows GPU node.
+8. Fetch transcript text and optional JSON back to the local host.
+
+## Explicit Fallback
+
+Fallback is opt-in. The packaged entrypoint does not auto-switch to a local
+provider unless `--fallback-provider` is supplied.
+
+Current provider:
+
+- `http-generic`
+
+Current limits:
+
+- fallback is only attempted for eligible ready-gate failures
+- fallback is not triggered automatically for all remote execution errors
+- the first provider is a generic HTTP adapter configured by local env vars or a
+  JSON config file, not a hard dependency on another skill
 
 ## Entry Scripts
 
@@ -155,5 +188,6 @@ Treat the draft as usable only when all of the following are true:
 
 - Runtime goals, scope, and execution contract: [references/runtime-contract.md](references/runtime-contract.md)
 - Packaged entrypoint behavior and limitations: [references/packaged-workflow.md](references/packaged-workflow.md)
+- Explicit fallback provider contract: [references/fallback-contract.md](references/fallback-contract.md)
 - SSH, probe, install, and smoke bootstrap details: [references/bootstrap.md](references/bootstrap.md)
 - Probe, smoke, and large-v3 validation evidence: [references/validation.md](references/validation.md)

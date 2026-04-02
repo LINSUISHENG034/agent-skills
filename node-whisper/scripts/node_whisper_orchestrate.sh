@@ -13,6 +13,7 @@ REQUIRE_READY_HELPER="${NODE_WHISPER_REQUIRE_READY_HELPER:-$SCRIPT_DIR/node_whis
 STAGE_MEDIA_HELPER="${NODE_WHISPER_STAGE_MEDIA_HELPER:-$SCRIPT_DIR/node_whisper_stage_media.sh}"
 FETCH_RESULTS_HELPER="${NODE_WHISPER_FETCH_RESULTS_HELPER:-$SCRIPT_DIR/node_whisper_fetch_results.sh}"
 ERROR_MAP_HELPER="${NODE_WHISPER_ERROR_MAP_HELPER:-$SCRIPT_DIR/node_whisper_error_map.py}"
+FALLBACK_HELPER="${NODE_WHISPER_FALLBACK_HELPER:-$SCRIPT_DIR/node_whisper_fallback.sh}"
 
 quiet_requested_from_args() {
   local arg
@@ -56,6 +57,39 @@ else:
     print(value)' "$field"
 }
 
+json_get_optional() {
+  local field="$1"
+  "$PYTHON_BIN" -c 'import json,sys
+try:
+    data=json.load(sys.stdin)
+except Exception:
+    print("")
+    raise SystemExit(0)
+value=data.get(sys.argv[1], "")
+if isinstance(value, bool):
+    print("true" if value else "false")
+elif value is None:
+    print("")
+else:
+    print(value)' "$field"
+}
+
+fallback_is_eligible() {
+  local stage="$1"
+  local error_code="$2"
+  if [[ "$stage" != "ready" ]]; then
+    return 1
+  fi
+  case "$error_code" in
+    node_unreachable|node_runtime_repair_failed)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 fail() {
   local stage="$1"
   local error_code="$2"
@@ -67,6 +101,54 @@ fail() {
     --message "$message" \
     --exit-code "$exit_code" >&2
   exit "$exit_code"
+}
+
+run_fallback() {
+  local trigger_stage="$1"
+  local trigger_code="$2"
+  local fallback_args fallback_json fallback_text_out fallback_json_out
+  progress fallback "using provider ${fallback_provider} after ${trigger_stage}/${trigger_code}"
+
+  fallback_args=(
+    --provider "$fallback_provider"
+    --input "$input_path"
+    --input-stem "$input_stem"
+    --output-dir "$output_dir"
+    --model "$model"
+    --reason-stage "$trigger_stage"
+    --reason-code "$trigger_code"
+  )
+  if [[ -n "$language" ]]; then
+    fallback_args+=(--language "$language")
+  fi
+  if [[ -n "$fallback_config" ]]; then
+    fallback_args+=(--config "$fallback_config")
+  fi
+  if [[ "$want_json" == "true" ]]; then
+    fallback_args+=(--want-json)
+  fi
+  if [[ "$timestamps" == "true" ]]; then
+    fallback_args+=(--timestamps)
+  fi
+
+  fallback_json="$("$FALLBACK_HELPER" "${fallback_args[@]}" 2> >(cat >&2))" || exit $?
+  fallback_text_out="$(json_get_optional local_text_out <<<"$fallback_json")"
+  fallback_json_out="$(json_get_optional local_json_out <<<"$fallback_json")"
+
+  if [[ ! -f "$fallback_text_out" ]]; then
+    fail "fallback" "result_fetch_failed" "Fallback transcript text file was not created: $fallback_text_out" 14
+  fi
+
+  cat "$fallback_text_out"
+
+  if [[ "$quiet" != "true" ]]; then
+    if [[ -n "$fallback_json_out" ]]; then
+      printf 'node-whisper: engine=fallback:%s text=%s json=%s\n' "$fallback_provider" "$fallback_text_out" "$fallback_json_out" >&2
+    else
+      printf 'node-whisper: engine=fallback:%s text=%s\n' "$fallback_provider" "$fallback_text_out" >&2
+    fi
+  fi
+  exit 0
 }
 
 validated_json="$("$VALIDATE_INPUT_HELPER" "$@" 2> >(cat >&2))" || exit $?
@@ -88,6 +170,8 @@ want_json="$(json_get want_json <<<"$validated_json")"
 timestamps="$(json_get timestamps <<<"$validated_json")"
 node_name="$(json_get node_name <<<"$validated_json")"
 force_repair="$(json_get force_repair <<<"$validated_json")"
+fallback_provider="$(json_get_optional fallback_provider <<<"$validated_json")"
+fallback_config="$(json_get_optional fallback_config <<<"$validated_json")"
 if [[ "$quiet" == "true" ]]; then
   PROGRESS_ENABLED="false"
 else
@@ -111,7 +195,29 @@ if [[ "$quiet" == "true" ]]; then
 fi
 
 progress ready "checking remote runtime"
-ready_json="$("$REQUIRE_READY_HELPER" "${ready_args[@]}" 2> >(cat >&2))" || exit $?
+ready_stderr="$(mktemp)"
+if ready_json="$("$REQUIRE_READY_HELPER" "${ready_args[@]}" 2>"$ready_stderr")"; then
+  rm -f "$ready_stderr"
+else
+  ready_status=$?
+  ready_error="$(cat "$ready_stderr")"
+  rm -f "$ready_stderr"
+  ready_stage="$(json_get_optional stage <<<"$ready_error")"
+  ready_code="$(json_get_optional error_code <<<"$ready_error")"
+  ready_message="$(json_get_optional message <<<"$ready_error")"
+  if [[ -n "$fallback_provider" ]] && fallback_is_eligible "$ready_stage" "$ready_code"; then
+    printf '%s\n' "$ready_error" >&2
+    run_fallback "$ready_stage" "$ready_code"
+  fi
+  if [[ -n "$ready_stage" && -n "$ready_code" && -n "$ready_message" ]]; then
+    if [[ -z "$fallback_provider" ]]; then
+      fail "$ready_stage" "$ready_code" "${ready_message} No fallback provider was enabled." "$ready_status"
+    fi
+    fail "$ready_stage" "$ready_code" "${ready_message} Fallback provider '${fallback_provider}' was not used because this failure is not eligible for fallback." "$ready_status"
+  fi
+  printf '%s\n' "$ready_error" >&2
+  exit "$ready_status"
+fi
 remote_host="$(json_get remote_host <<<"$ready_json")"
 runtime_dir="$(json_get runtime_dir <<<"$ready_json")"
 
@@ -183,8 +289,8 @@ cat "$local_text_out"
 
 if [[ "$quiet" != "true" ]]; then
   if [[ "$want_json" == "true" ]]; then
-    printf 'node-whisper: node=%s model=%s text=%s json=%s\n' "$remote_host" "$model" "$local_text_out" "$local_json_out" >&2
+    printf 'node-whisper: engine=node-whisper-remote node=%s model=%s text=%s json=%s\n' "$remote_host" "$model" "$local_text_out" "$local_json_out" >&2
   else
-    printf 'node-whisper: node=%s model=%s text=%s\n' "$remote_host" "$model" "$local_text_out" >&2
+    printf 'node-whisper: engine=node-whisper-remote node=%s model=%s text=%s\n' "$remote_host" "$model" "$local_text_out" >&2
   fi
 fi

@@ -32,6 +32,12 @@ class NodeWhisperCliTests(unittest.TestCase):
         path.write_text(contents, encoding="utf-8")
         path.chmod(0o755)
 
+    def parse_last_json_line(self, text: str) -> dict:
+        for line in reversed([line.strip() for line in text.splitlines() if line.strip()]):
+            if line.startswith("{") and line.endswith("}"):
+                return json.loads(line)
+        raise ValueError(f"no JSON object line found in: {text!r}")
+
     @contextmanager
     def temporary_skill_env(self, contents: str):
         original = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else None
@@ -275,6 +281,7 @@ PY
                 """#!/usr/bin/env python3
 import argparse
 import json
+import sys
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--stage", required=True)
@@ -289,6 +296,7 @@ print(json.dumps({
     "message": args.message,
     "exit_code": args.exit_code,
 }))
+raise SystemExit(args.exit_code)
 """,
             )
 
@@ -310,6 +318,236 @@ printf '{"ok": true, "stage": "done"}\n'
             env["NODE_WHISPER_REQUIRE_READY_HELPER"] = str(ready_stub)
             env["NODE_WHISPER_STAGE_MEDIA_HELPER"] = str(stage_stub)
             env["NODE_WHISPER_FETCH_RESULTS_HELPER"] = str(fetch_stub)
+            env["NODE_WHISPER_ERROR_MAP_HELPER"] = str(error_map_stub)
+
+            yield media, env
+
+    @contextmanager
+    def stubbed_fallback_runtime(self, *, ready_error_code: str = "node_unreachable"):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            media = root / "clip.wav"
+            media.write_text("fake media placeholder", encoding="utf-8")
+            ssh_key = root / "node_whisper_test_key"
+            ssh_key.write_text("not-a-real-key", encoding="utf-8")
+
+            validate_stub = root / "validate.sh"
+            ready_stub = root / "ready.sh"
+            fallback_stub = root / "fallback.sh"
+            error_map_stub = root / "error_map.py"
+
+            self.write_executable(
+                validate_stub,
+                """#!/usr/bin/env bash
+set -euo pipefail
+quiet=0
+want_json=0
+timestamps=0
+output_dir=""
+input_path=""
+fallback_provider=""
+fallback_config=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quiet)
+      quiet=1
+      shift
+      ;;
+    --json)
+      want_json=1
+      shift
+      ;;
+    --timestamps)
+      timestamps=1
+      want_json=1
+      shift
+      ;;
+    --output-dir)
+      output_dir="${2:-}"
+      shift 2
+      ;;
+    --fallback-provider)
+      fallback_provider="${2:-}"
+      shift 2
+      ;;
+    --fallback-config)
+      fallback_config="${2:-}"
+      shift 2
+      ;;
+    --model|--language|--node|--transport)
+      shift 2
+      ;;
+    --force-repair|--dry-run)
+      shift
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      if [[ -z "$input_path" ]]; then
+        input_path="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+if [[ -z "$output_dir" ]]; then
+  output_dir="$(dirname "$input_path")"
+fi
+input_name="$(basename "$input_path")"
+input_stem="${input_name%.*}"
+python3 - <<'PY' "$input_path" "$input_name" "$input_stem" "$output_dir" "$want_json" "$timestamps" "$quiet" "$fallback_provider" "$fallback_config"
+import json
+import sys
+
+(
+    input_path,
+    input_name,
+    input_stem,
+    output_dir,
+    want_json,
+    timestamps,
+    quiet,
+    fallback_provider,
+    fallback_config,
+) = sys.argv[1:]
+payload = {
+    "ok": True,
+    "stage": "input",
+    "input_path": input_path,
+    "input_name": input_name,
+    "input_stem": input_stem,
+    "input_extension": ".wav",
+    "media_kind": "audio",
+    "output_format": "text+json" if want_json == "1" else "text",
+    "model": "large-v3",
+    "language": None,
+    "node_name": None,
+    "output_dir": output_dir,
+    "transport": "ssh",
+    "want_json": want_json == "1",
+    "timestamps": timestamps == "1",
+    "quiet": quiet == "1",
+    "force_repair": False,
+    "dry_run": False,
+    "fallback_provider": fallback_provider or None,
+    "fallback_config": fallback_config or None,
+}
+print(json.dumps(payload))
+PY
+""",
+            )
+
+            self.write_executable(
+                ready_stub,
+                f"""#!/usr/bin/env python3
+import json
+import sys
+
+payload = {{
+    "ok": False,
+    "stage": "ready",
+    "error_code": "{ready_error_code}",
+    "message": "stubbed remote readiness failure",
+}}
+print(json.dumps(payload), file=sys.stderr)
+raise SystemExit(10)
+""",
+            )
+
+            self.write_executable(
+                fallback_stub,
+                """#!/usr/bin/env bash
+set -euo pipefail
+output_dir=""
+input_stem=""
+provider=""
+want_json=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output-dir)
+      output_dir="${2:-}"
+      shift 2
+      ;;
+    --input-stem)
+      input_stem="${2:-}"
+      shift 2
+      ;;
+    --provider)
+      provider="${2:-}"
+      shift 2
+      ;;
+    --want-json|--timestamps)
+      want_json=1
+      shift
+      ;;
+    --input|--model|--language|--config|--reason-stage|--reason-code)
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+mkdir -p "$output_dir"
+local_text_out="${output_dir}/${input_stem}.node-whisper.txt"
+printf 'fallback transcript\n' > "$local_text_out"
+local_json_out=""
+if [[ "$want_json" -eq 1 ]]; then
+  local_json_out="${output_dir}/${input_stem}.node-whisper.json"
+  printf '{"ok": true, "engine": "fallback", "provider": "%s"}\n' "$provider" > "$local_json_out"
+fi
+python3 - <<'PY' "$provider" "$local_text_out" "$local_json_out" "$want_json"
+import json
+import sys
+
+provider, local_text_out, local_json_out, want_json = sys.argv[1:]
+payload = {
+    "ok": True,
+    "stage": "fallback",
+    "engine": "fallback",
+    "provider": provider,
+    "local_text_out": local_text_out,
+    "local_json_out": local_json_out if want_json == "1" else None,
+    "language": "en",
+    "duration": 3.0,
+    "total_seconds": 1.25,
+}
+print(json.dumps(payload))
+PY
+""",
+            )
+
+            self.write_executable(
+                error_map_stub,
+                """#!/usr/bin/env python3
+import argparse
+import json
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--stage", required=True)
+parser.add_argument("--error-code", required=True)
+parser.add_argument("--message", required=True)
+parser.add_argument("--exit-code", required=True, type=int)
+args = parser.parse_args()
+print(json.dumps({
+    "ok": False,
+    "stage": args.stage,
+    "error_code": args.error_code,
+    "message": args.message,
+    "exit_code": args.exit_code,
+}))
+""",
+            )
+
+            env = os.environ.copy()
+            env["NODE_WHISPER_ENV_FILE"] = str(root / "missing.env")
+            env["NODE_WHISPER_REMOTE_USER"] = "stub-user"
+            env["NODE_WHISPER_REMOTE_HOST"] = "stub-host"
+            env["NODE_WHISPER_SSH_KEY"] = str(ssh_key)
+            env["NODE_WHISPER_VALIDATE_INPUT_HELPER"] = str(validate_stub)
+            env["NODE_WHISPER_REQUIRE_READY_HELPER"] = str(ready_stub)
+            env["NODE_WHISPER_FALLBACK_HELPER"] = str(fallback_stub)
             env["NODE_WHISPER_ERROR_MAP_HELPER"] = str(error_map_stub)
 
             yield media, env
@@ -389,7 +627,7 @@ printf '{"ok": true, "stage": "done"}\n'
         self.assertIn("node-whisper[stage]:", result.stderr)
         self.assertIn("node-whisper[transcribe]:", result.stderr)
         self.assertIn("node-whisper[fetch]:", result.stderr)
-        self.assertIn("node-whisper: node=stub-host model=large-v3", result.stderr)
+        self.assertIn("node-whisper: engine=node-whisper-remote node=stub-host model=large-v3", result.stderr)
 
     def test_quiet_mode_suppresses_progress_markers(self) -> None:
         with self.stubbed_orchestrator_runtime() as (media, env):
@@ -403,6 +641,46 @@ printf '{"ok": true, "stage": "done"}\n'
         self.assertNotIn("node-whisper[transcribe]:", result.stderr)
         self.assertNotIn("node-whisper[fetch]:", result.stderr)
         self.assertEqual(result.stderr, "")
+
+    def test_dry_run_includes_fallback_provider_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            media = Path(tmpdir) / "clip.mp3"
+            media.write_text("fake media placeholder", encoding="utf-8")
+            config_path = Path(tmpdir) / "fallback.json"
+            config_path.write_text('{"url":"http://127.0.0.1:9999/transcribe"}', encoding="utf-8")
+
+            result = self.run_orchestrator(
+                str(media),
+                "--dry-run",
+                "--fallback-provider",
+                "http-generic",
+                "--fallback-config",
+                str(config_path),
+            )
+
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout.strip())
+        self.assertEqual(payload["fallback_provider"], "http-generic")
+        self.assertEqual(payload["fallback_config"], str(config_path.resolve()))
+
+    def test_ready_failure_without_fallback_reports_explicit_no_fallback_decision(self) -> None:
+        with self.stubbed_fallback_runtime() as (media, env):
+            result = self.run_orchestrator(str(media), env=env)
+
+        self.assertNotEqual(result.returncode, 0)
+        payload = self.parse_last_json_line(result.stderr)
+        self.assertEqual(payload["stage"], "ready")
+        self.assertEqual(payload["error_code"], "node_unreachable")
+        self.assertIn("No fallback provider was enabled", payload["message"])
+
+    def test_ready_failure_with_explicit_fallback_provider_uses_fallback(self) -> None:
+        with self.stubbed_fallback_runtime() as (media, env):
+            result = self.run_orchestrator(str(media), "--fallback-provider", "http-generic", "--json", env=env)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "fallback transcript\n")
+        self.assertIn("node-whisper[fallback]:", result.stderr)
+        self.assertIn("engine=fallback:http-generic", result.stderr)
 
 
 if __name__ == "__main__":

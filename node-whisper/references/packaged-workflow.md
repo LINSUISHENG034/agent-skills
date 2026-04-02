@@ -18,6 +18,13 @@ Common options:
   --model large-v3
 ```
 
+Explicit fallback remains opt-in:
+
+```bash
+{baseDir}/scripts/node_whisper_orchestrate.sh /path/to/media.mp4 \
+  --fallback-provider http-generic
+```
+
 Before normal use, copy `{baseDir}/.env.example` to `{baseDir}/.env` and fill in
 the machine-specific values for your Windows host. The shell scripts auto-load
 the skill-root `.env`.
@@ -80,6 +87,8 @@ Keep the public CLI close to `local-whisper` where it helps usability:
 - `--json`
 - `--timestamps`
 - `--quiet`
+- `--fallback-provider`
+- `--fallback-config`
 
 Added for remote packaging:
 
@@ -108,6 +117,12 @@ The intended variables are:
 - `NODE_WHISPER_RUNTIME_DIR`
 - `NODE_WHISPER_TRANSPORT`
 - `NODE_WHISPER_NODE_NAME`
+- `NODE_WHISPER_FALLBACK_HTTP_URL`
+- `NODE_WHISPER_FALLBACK_HTTP_HEADERS_JSON`
+- `NODE_WHISPER_FALLBACK_HTTP_EXTRA_FORM_JSON`
+- `NODE_WHISPER_FALLBACK_HTTP_FILE_FIELD`
+- `NODE_WHISPER_FALLBACK_HTTP_TEXT_FIELD`
+- `NODE_WHISPER_FALLBACK_HTTP_LANGUAGE_FIELD`
 
 ## Dry Run
 
@@ -129,3 +144,24 @@ The wrapper should normalize failures into stable user-facing classes:
 - `input_stage_failed`
 - `transcription_failed`
 - `result_fetch_failed`
+- `unsupported_fallback_provider`
+- `fallback_missing_configuration`
+- `fallback_provider_unreachable`
+- `fallback_provider_http_error`
+- `fallback_invalid_response`
+
+## Explicit Fallback
+
+Fallback is never automatic. The wrapper only attempts a fallback provider when
+the caller passes `--fallback-provider <name>`.
+
+Current provider:
+
+- `http-generic`
+
+Current trigger scope:
+
+- fallback is attempted only for eligible ready-gate failures
+- fallback is not a blanket retry path for every remote execution failure
+
+See `references/fallback-contract.md` for the provider contract and configuration surface.
