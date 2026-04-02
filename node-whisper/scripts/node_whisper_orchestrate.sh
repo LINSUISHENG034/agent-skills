@@ -8,6 +8,38 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 REMOTE_USER="${NODE_WHISPER_REMOTE_USER:-}"
 REMOTE_HOST="${NODE_WHISPER_REMOTE_HOST:-}"
 SSH_KEY_PATH="${NODE_WHISPER_SSH_KEY:-${SSH_KEY:-$HOME/.ssh/node_whisper_win}}"
+VALIDATE_INPUT_HELPER="${NODE_WHISPER_VALIDATE_INPUT_HELPER:-$SCRIPT_DIR/node_whisper_validate_input.sh}"
+REQUIRE_READY_HELPER="${NODE_WHISPER_REQUIRE_READY_HELPER:-$SCRIPT_DIR/node_whisper_require_ready.sh}"
+STAGE_MEDIA_HELPER="${NODE_WHISPER_STAGE_MEDIA_HELPER:-$SCRIPT_DIR/node_whisper_stage_media.sh}"
+FETCH_RESULTS_HELPER="${NODE_WHISPER_FETCH_RESULTS_HELPER:-$SCRIPT_DIR/node_whisper_fetch_results.sh}"
+ERROR_MAP_HELPER="${NODE_WHISPER_ERROR_MAP_HELPER:-$SCRIPT_DIR/node_whisper_error_map.py}"
+
+quiet_requested_from_args() {
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--quiet" ]]; then
+      printf 'true'
+      return 0
+    fi
+  done
+  printf 'false'
+}
+
+PROGRESS_ENABLED="$(quiet_requested_from_args "$@")"
+if [[ "$PROGRESS_ENABLED" == "true" ]]; then
+  PROGRESS_ENABLED="false"
+else
+  PROGRESS_ENABLED="true"
+fi
+
+progress() {
+  local stage="$1"
+  local message="$2"
+  if [[ "$PROGRESS_ENABLED" != "true" ]]; then
+    return 0
+  fi
+  printf 'node-whisper[%s]: %s\n' "$stage" "$message" >&2
+}
 
 json_get() {
   local field="$1"
@@ -29,7 +61,7 @@ fail() {
   local error_code="$2"
   local message="$3"
   local exit_code="${4:-1}"
-  "$PYTHON_BIN" "$SCRIPT_DIR/node_whisper_error_map.py" \
+  "$PYTHON_BIN" "$ERROR_MAP_HELPER" \
     --stage "$stage" \
     --error-code "$error_code" \
     --message "$message" \
@@ -37,7 +69,7 @@ fail() {
   exit "$exit_code"
 }
 
-validated_json="$("$SCRIPT_DIR/node_whisper_validate_input.sh" "$@" 2> >(cat >&2))" || exit $?
+validated_json="$("$VALIDATE_INPUT_HELPER" "$@" 2> >(cat >&2))" || exit $?
 
 dry_run="$(json_get dry_run <<<"$validated_json")"
 if [[ "$dry_run" == "true" ]]; then
@@ -56,6 +88,12 @@ want_json="$(json_get want_json <<<"$validated_json")"
 timestamps="$(json_get timestamps <<<"$validated_json")"
 node_name="$(json_get node_name <<<"$validated_json")"
 force_repair="$(json_get force_repair <<<"$validated_json")"
+if [[ "$quiet" == "true" ]]; then
+  PROGRESS_ENABLED="false"
+else
+  PROGRESS_ENABLED="true"
+fi
+progress validate "validated input"
 
 [[ -n "$REMOTE_USER" ]] || fail "config" "missing_configuration" "Set NODE_WHISPER_REMOTE_USER in the skill-root .env or the environment." 3
 [[ -n "$REMOTE_HOST" ]] || fail "config" "missing_configuration" "Set NODE_WHISPER_REMOTE_HOST in the skill-root .env or the environment." 3
@@ -72,7 +110,8 @@ if [[ "$quiet" == "true" ]]; then
   ready_args+=(--quiet)
 fi
 
-ready_json="$("$SCRIPT_DIR/node_whisper_require_ready.sh" "${ready_args[@]}" 2> >(cat >&2))" || exit $?
+progress ready "checking remote runtime"
+ready_json="$("$REQUIRE_READY_HELPER" "${ready_args[@]}" 2> >(cat >&2))" || exit $?
 remote_host="$(json_get remote_host <<<"$ready_json")"
 runtime_dir="$(json_get runtime_dir <<<"$ready_json")"
 
@@ -86,7 +125,8 @@ if [[ "$want_json" == "true" ]]; then
   stage_args+=(--want-json)
 fi
 
-stage_json="$("$SCRIPT_DIR/node_whisper_stage_media.sh" "${stage_args[@]}" 2> >(cat >&2))" || exit $?
+progress stage "staging media on ${remote_host}"
+stage_json="$("$STAGE_MEDIA_HELPER" "${stage_args[@]}" 2> >(cat >&2))" || exit $?
 job_id="$(json_get job_id <<<"$stage_json")"
 remote_input_path="$(json_get remote_input_path <<<"$stage_json")"
 remote_text_out="$(json_get remote_text_out <<<"$stage_json")"
@@ -104,6 +144,7 @@ if [[ "$timestamps" == "true" ]]; then
   remote_exec_cmd+=(-Timestamps)
 fi
 
+progress transcribe "running remote transcription on ${remote_host}"
 remote_exec_json="$(ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=accept-new \
   "${REMOTE_USER}@${REMOTE_HOST}" \
   "${remote_exec_cmd[@]}" 2>/dev/null)" || \
@@ -129,7 +170,8 @@ if [[ "$want_json" == "true" ]]; then
   fetch_args+=(--want-json --remote-json-out "$remote_json_out")
 fi
 
-fetch_json="$("$SCRIPT_DIR/node_whisper_fetch_results.sh" "${fetch_args[@]}" 2> >(cat >&2))" || exit $?
+progress fetch "fetching results from ${remote_host}"
+fetch_json="$("$FETCH_RESULTS_HELPER" "${fetch_args[@]}" 2> >(cat >&2))" || exit $?
 local_text_out="$(json_get local_text_out <<<"$fetch_json")"
 local_json_out="$(json_get local_json_out <<<"$fetch_json")"
 

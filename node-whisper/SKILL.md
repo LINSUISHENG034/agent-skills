@@ -39,6 +39,9 @@ The wrapper owns:
 6. transcript fetch back to the local host
 
 Transcript text stays on stdout. Operational noise and summaries stay on stderr.
+Default runs also emit coarse phase markers on stderr for `validate`, `ready`,
+`stage`, `transcribe`, and `fetch`. `--quiet` suppresses those progress
+markers and keeps stderr reserved for errors only.
 
 ## Local Config
 
