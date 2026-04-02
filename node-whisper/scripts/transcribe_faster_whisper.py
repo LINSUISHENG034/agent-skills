@@ -2,6 +2,7 @@
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 
@@ -21,6 +22,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    started_at = time.perf_counter()
 
     try:
         from faster_whisper import WhisperModel
@@ -33,12 +35,15 @@ def main() -> int:
         print(json.dumps({"ok": False, "stage": "input", "error": f"audio not found: {audio_path}"}))
         return 1
 
+    model_load_started_at = time.perf_counter()
     try:
         model = WhisperModel(args.model, device=args.device, compute_type=args.compute_type)
     except Exception as exc:
         print(json.dumps({"ok": False, "stage": "model_load", "error": str(exc)}))
         return 1
+    model_load_seconds = time.perf_counter() - model_load_started_at
 
+    transcribe_started_at = time.perf_counter()
     try:
         segments_iter, info = model.transcribe(
             str(audio_path),
@@ -49,6 +54,7 @@ def main() -> int:
     except Exception as exc:
         print(json.dumps({"ok": False, "stage": "transcribe", "error": str(exc)}))
         return 1
+    transcribe_seconds = time.perf_counter() - transcribe_started_at
 
     text = "".join(segment.text for segment in segments).strip()
     text_out = Path(args.text_out)
@@ -71,6 +77,9 @@ def main() -> int:
         "duration": getattr(info, "duration", None),
         "duration_after_vad": getattr(info, "duration_after_vad", None),
         "segment_count": len(segments),
+        "model_load_seconds": model_load_seconds,
+        "transcribe_seconds": transcribe_seconds,
+        "total_seconds": time.perf_counter() - started_at,
         "text_out": str(text_out),
     }
     if json_out:
