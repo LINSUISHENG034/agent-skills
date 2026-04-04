@@ -416,7 +416,43 @@ run_browser_path() {
   grep -q 'runtime:check-page .*--check challenge' "$tmp/actions.log"
   grep -q 'runtime:check-page .*--check login-wall' "$tmp/actions.log"
   grep -q 'runtime:check-page .*--check page-info' "$tmp/actions.log"
-  grep -q 'cleanup:--run-dir ' "$tmp/actions.log"
+  ! grep -q '^cleanup:' "$tmp/actions.log"
+  ! grep -q '^assist:' "$tmp/actions.log"
+}
+
+run_browser_path_cleanup_on_exit() {
+  local tmp="$1"
+  local output
+  setup_stubs "$tmp"
+  output="$(
+    LOG_FILE="$tmp/actions.log" \
+    PROFILE_DIR_RESPONSE="$tmp/resolved-profile" \
+    RUNTIME_STATUS_RESPONSE=running \
+    VERIFY_BEHAVIOR=success \
+    SELECT_TARGET_SEQUENCE=page-dashboard \
+    PAGE_STATUS_RESPONSE=ready \
+    PAGE_INFO_URL_RESPONSE="https://protected.example/dashboard" \
+    RUNTIME_STATE_DIR="$tmp/runtime-state" \
+    HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
+    HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
+    HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
+    HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
+    HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
+      bash "$BASE_DIR/open-host-page.sh" \
+      --url "https://protected.example/dashboard" \
+      --task-mode interactive \
+      --expected-action browser \
+      --cleanup-on-exit \
+      --run-dir "$tmp/browser-cleanup-run"
+  )"
+
+  assert_json_value "$output" status ready
+  assert_json_value "$output" next_action none
+  assert_json_value "$output" operator_required false
+  assert_json_value "$output" runtime_status running
+  assert_json_value "$output" page_status ready
+  grep -q '^cleanup:--run-dir ' "$tmp/actions.log"
   ! grep -q '^assist:' "$tmp/actions.log"
 }
 
@@ -725,6 +761,7 @@ run_expected_failure
 run_lightweight "$TMP_DIR/light"
 run_expected_action_failure "$TMP_DIR/route-assert"
 run_browser_path "$TMP_DIR/browser"
+run_browser_path_cleanup_on_exit "$TMP_DIR/browser-cleanup-on-exit"
 run_verify_failure_reuses_running_runtime "$TMP_DIR/verify-fail-running"
 run_normalized_target_url_is_ready "$TMP_DIR/normalized-ready"
 run_assist_path_challenge "$TMP_DIR/assist-challenge"

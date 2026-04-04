@@ -19,8 +19,9 @@ Use this skill when the agent needs public research plus the ability to escalate
 - resolves the durable profile via `profile-resolution.sh` before browser start
 - starts the host browser runtime only when the router returns `route: "browser"`
 - uses local `host-page-ops.py` and `host-page-snapshot.py` helpers instead of importing `ubuntu-browser-session`
-- runs `cleanup-host-runtime.sh` for standard completion so browser, Xvfb, x11vnc, and websockify PIDs are released after non-assisted tasks
-- preserves runtime and helper state when assisted handoff is returned; cleanup happens after assisted capture/stop
+- preserves the browser runtime for successful browser-route handoff so follow-up CDP, snapshot, and DOM helper calls can reuse the returned session
+- accepts `--cleanup-on-exit` when the caller explicitly wants one-shot browser work that tears down the runtime before script exit
+- preserves runtime and helper state when assisted handoff is returned; cleanup happens after assisted capture/stop or explicit cleanup
 - emits machine-readable JSON: all paths include `route`, `reason`, `needs_browser`, `origin`, `status`, `next_action`, and `operator_required`; browser paths add `run_dir`, `profile_dir`, `runtime_status`, and `page_status`; assisted recovery additionally includes `operator_url`, `blocking_reason`, `resume_command`, `message_for_agent`, `assisted_session`, and `lan_novnc_url`
 
 Assisted flow is the exception path. The normal path is to complete work through `open-host-page.sh` without operator takeover.
@@ -44,6 +45,8 @@ Start with `WebSearch`, `WebFetch`, `curl`, or `Jina` for public requests. Escal
 
 The assisted path exposes a single fixed LAN `lan_novnc_url` on port `6084` by default. Assisted outputs also include `operator_url`, `resume_command`, and `message_for_agent` so the next step is explicit. The `capture` command writes both the session manifest and site-session registry entry so future tasks reuse the same host profile.
 
+Common blocked-site pattern: when `operator_required: true` and `next_action: open-novnc`, the live browser has already hit a challenge such as Cloudflare Turnstile, reCAPTCHA, or a login wall. Show the user `operator_url` or `lan_novnc_url`, tell them to complete the challenge in that remote browser, then resume only through `resume_command`. Do not keep autonomous browsing after the handoff payload is returned.
+
 ## Identity And Protected Route Rules
 
 Protected-site browser work stays in the host-browser workflow by default. The normal workflow does not hand protected tasks to a fetch-only path once browser routing is required.
@@ -58,6 +61,8 @@ Agent rule: if `operator_required` is `true`, stop autonomous browsing, show the
 
 Cleanup scripts stop browser, Xvfb, x11vnc, and websockify PIDs when present, remove temporary runtime directories, and rewrite the runtime state to `STATE=closed` while leaving persistent profile data untouched. When assisted handoff is active, runtime state is intentionally preserved until assisted capture/stop finalizes the session.
 
+`open-host-page.sh` preserves browser runtimes for successful browser-route `ready` results by default so downstream helpers can reuse the same CDP session. Use `--cleanup-on-exit` only when the caller explicitly wants ephemeral browser startup with no follow-up reuse.
+
 ## Page Helper Usage
 
 - Inspect current page state: `host-page-ops.py --check page-info`
@@ -65,7 +70,20 @@ Cleanup scripts stop browser, Xvfb, x11vnc, and websockify PIDs when present, re
 - Click a visible link by text: `host-page-ops.py --click-link-text "Pricing"`
 - Capture a markdown snapshot: `host-page-snapshot.py --format markdown`
 - For dynamic pages, `host-page-ops.py` also supports `--retry N --retry-delay-ms MS` on `--eval` and `--check` flows
+- After `open-host-page.sh` returns a browser-route `ready` payload, reuse the returned `run_dir` and live runtime for helper calls; do not assume the session is ephemeral unless you passed `--cleanup-on-exit`
 - Pass all flags in the same shell command invocation, and quote URLs, selectors, and JS expressions so the shell does not split them incorrectly
+
+## GPU Crash On Headless Servers
+
+GUI browser startup on GPU-less Ubuntu hosts can expose a Chrome startup that opens a CDP port but never renders the page correctly. A common symptom is Chrome logging `Exiting GPU process due to errors during initialization` while the task still appears superficially `ready`.
+
+If that happens:
+
+- verify the live page with `host-page-ops.py --check page-info` or `host-page-snapshot.py` before assuming the browser is usable
+- prefer the assisted LAN flow when a human can recover the page more quickly than repeated autonomous retries
+- if you need to debug runtime launch directly, fall back to `browser-runtime.sh start ... --enable-unsafe-swiftshader --disable-gpu` and then inspect the same page through the helper scripts
+
+`status: ready` means the runtime and selected target were available at handoff time; it does not guarantee that a protected or GPU-sensitive page is still rendering correctly after launch.
 
 ## Use Cases
 

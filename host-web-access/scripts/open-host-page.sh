@@ -8,13 +8,14 @@ source "$SCRIPT_DIR/runtime-common.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  open-host-page.sh --url URL [--session-key KEY] [--task-mode MODE] [--expected-action ACTION] [--run-dir DIR] [--manifest-root DIR]
+  open-host-page.sh --url URL [--session-key KEY] [--task-mode MODE] [--expected-action ACTION] [--cleanup-on-exit] [--run-dir DIR] [--manifest-root DIR]
 
 Options:
   --url URL
   --session-key KEY
   --task-mode MODE           latest|article|dynamic|protected|interactive|login-required|host-browser
   --expected-action ACTION   search|fetch|browser (legacy lightweight alias accepted)
+  --cleanup-on-exit          tear down the browser runtime before the script exits
   --run-dir DIR
   --manifest-root DIR
 EOF
@@ -217,6 +218,7 @@ PAGE_OPS_HELPER="${HOST_WEB_ACCESS_PAGE_OPS_HELPER:-$SCRIPT_DIR/host-page-ops.py
 
 task_mode="latest"
 expected_action=""
+cleanup_on_exit="false"
 url=""
 session_key="default"
 run_dir=""
@@ -239,6 +241,10 @@ while [ "$#" -gt 0 ]; do
     --expected-action)
       expected_action="$2"
       shift 2
+      ;;
+    --cleanup-on-exit)
+      cleanup_on_exit="true"
+      shift
       ;;
     --run-dir)
       run_dir="$2"
@@ -437,6 +443,9 @@ case "$page_status" in
     PRESERVE_RUNTIME_ON_EXIT="true"
     ;;
   *)
+    if [ "$cleanup_on_exit" != "true" ]; then
+      PRESERVE_RUNTIME_ON_EXIT="true"
+    fi
     ;;
 esac
 
