@@ -22,7 +22,8 @@ PY
 }
 
 run_expect search latest-info --latest
-run_expect fetch public-article --article
+run_expect extract public-article --article
+run_expect extract batch-read --batch-read
 run_expect browser dynamic-rendering --dynamic
 run_expect browser protected-site --protected
 run_expect browser interaction-required --interactive

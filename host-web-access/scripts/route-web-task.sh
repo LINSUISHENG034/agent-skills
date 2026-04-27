@@ -3,6 +3,7 @@ set -euo pipefail
 
 latest_mode=false
 article_mode=false
+batch_mode=false
 dynamic_mode=false
 protected_mode=false
 interactive_mode=false
@@ -16,6 +17,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --article)
       article_mode=true
+      ;;
+    --batch-read)
+      article_mode=true
+      batch_mode=true
       ;;
     --dynamic)
       dynamic_mode=true
@@ -64,8 +69,11 @@ elif "$login_mode"; then
   route="browser"
   reason="login-required"
   needs_browser=true
+elif "$batch_mode"; then
+  route="extract"
+  reason="batch-read"
 elif "$article_mode"; then
-  route="fetch"
+  route="extract"
   reason="public-article"
 else
   route="search"

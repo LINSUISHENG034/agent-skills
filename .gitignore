@@ -53,3 +53,4 @@ dist/
 # Local reference copies of external authoring guides
 /docs/references/skill-authoring/The-Complete-Guide-to-Building-Skill-for-Claude.md
 /docs/references/skill-authoring/assets/The-Complete-Guide-to-Building-Skill-for-Claude.pdf
+.omx/

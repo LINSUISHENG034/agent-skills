@@ -15,6 +15,7 @@ Usage:
   browser-runtime.sh check-page --check TYPE [options]
   browser-runtime.sh select-target [--origin URL] [--target-url URL] [--targets-json JSON]
   browser-runtime.sh verify --origin URL --session-key KEY [--manifest-root DIR]
+  browser-runtime.sh doctor [--repair] [options]
   browser-runtime.sh ensure-browser [options]
 
 Options:
@@ -36,7 +37,22 @@ EOF
 }
 
 die() {
-  printf '[browser-runtime] ERROR: %s\n' "$*" >&2
+  local message="$1"
+  local error_code="${2:-runtime_error}"
+  local suggested_action="${3:-run-browser-runtime-doctor}"
+  python3 - "$error_code" "$message" "$suggested_action" <<'PY' >&2
+import json
+import sys
+
+error_code, message, suggested_action = sys.argv[1:]
+print(json.dumps({
+    "status": "error",
+    "component": "browser-runtime",
+    "error_code": error_code,
+    "message": message,
+    "suggested_action": suggested_action,
+}))
+PY
   exit 1
 }
 
@@ -187,11 +203,8 @@ wait_for_display() {
   die "Xvfb did not become ready on :$DISPLAY_NUM"
 }
 
-wait_for_cdp() {
-  local attempt
-
-  for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    if python3 - "$CDP_HOST" "$CDP_PORT" <<'PY'
+cdp_version_ready() {
+  python3 - "$CDP_HOST" "$CDP_PORT" <<'PY'
 import json
 import sys
 import urllib.request
@@ -204,13 +217,20 @@ except Exception:
     raise SystemExit(1)
 raise SystemExit(0 if isinstance(payload, dict) and payload.get("Browser") else 1)
 PY
-    then
+}
+
+wait_for_cdp() {
+  local attempt
+
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if cdp_version_ready; then
       return 0
     fi
     sleep 1
   done
 
-  die "CDP did not become ready on ${CDP_HOST}:${CDP_PORT}"
+  printf 'CDP did not become ready on %s:%s\n' "$CDP_HOST" "$CDP_PORT" >&2
+  return 1
 }
 
 resolve_context() {
@@ -472,6 +492,58 @@ PY
   printf '%s\n' "$manifest"
 }
 
+cmd_doctor() {
+  resolve_context
+  runtime_status
+
+  local issues=()
+  local repaired=false
+  if [ "$STATE" != "running" ]; then
+    issues+=("runtime_not_running")
+  elif ! cdp_version_ready; then
+    issues+=("cdp_unreachable")
+  else
+    local targets_json
+    targets_json="$(cmd_list_targets)"
+    if ! python3 - "$targets_json" <<'PY'
+import json
+import sys
+
+targets = json.loads(sys.argv[1] or "[]")
+raise SystemExit(0 if any(item.get("type") == "page" for item in targets) else 1)
+PY
+    then
+      issues+=("target_missing")
+    fi
+  fi
+
+  if "$REPAIR" && [ "${#issues[@]}" -gt 0 ]; then
+    cleanup_runtime_on_failure
+    manifest_helper mark-stale --root "$MANIFEST_ROOT" --origin "$ORIGIN" --session-key "$SESSION_KEY" --reason "doctor detected: ${issues[*]}" >/dev/null 2>&1 || true
+    repaired=true
+  fi
+
+  python3 - "$STATE" "$RUN_DIR" "$ORIGIN" "$SESSION_KEY" "$CDP_HOST" "$CDP_PORT" "$repaired" "${issues[@]}" <<'PY'
+import json
+import sys
+
+state, run_dir, origin, session_key, cdp_host, cdp_port, repaired, *issues = sys.argv[1:]
+status = "healthy" if not issues else ("stale" if "runtime_not_running" in issues else "broken")
+print(json.dumps({
+    "status": status,
+    "runtime_status": state,
+    "run_dir": run_dir,
+    "origin": origin,
+    "session_key": session_key,
+    "cdp_host": cdp_host,
+    "cdp_port": int(cdp_port),
+    "issues": issues,
+    "repaired": repaired == "true",
+    "suggested_action": "none" if not issues else ("restart-runtime" if not (repaired == "true") else "retry"),
+}, sort_keys=True))
+PY
+}
+
 cleanup_runtime_on_failure() {
   "$SCRIPT_DIR/cleanup-host-runtime.sh" --run-dir "$RUN_DIR" >/dev/null 2>&1 || true
 }
@@ -519,7 +591,7 @@ cmd_start() {
     start_process xvfb "$LOG_DIR/xvfb.log" \
       Xvfb ":$DISPLAY_NUM" -screen 0 1600x900x24 -ac +extension RANDR >/dev/null
     wait_for_display
-    browser_args+=(--new-window "$INITIAL_URL")
+    browser_args+=(--disable-gpu --enable-unsafe-swiftshader --new-window "$INITIAL_URL")
     BROWSER_COMMAND="$(printf '%q ' env DISPLAY=":$DISPLAY_NUM" "$BROWSER_CMD" "${browser_args[@]}")"
     BROWSER_COMMAND="${BROWSER_COMMAND% }"
     BROWSER_PID="$(
@@ -543,7 +615,7 @@ cmd_start() {
   write_state
   if ! wait_for_cdp; then
     cleanup_runtime_on_failure
-    die "browser runtime failed to expose CDP"
+    die "browser runtime failed to expose CDP" "cdp_unreachable" "restart-runtime-or-run-doctor"
   fi
 
   STATE="running"
@@ -574,6 +646,7 @@ CLI_PROFILE_DIR=""
 CLI_CDP_PORT=""
 CLI_DISPLAY_NUM=""
 CLI_BROWSER_CMD=""
+REPAIR=false
 CHECK_TYPE=""
 TARGET_ID=""
 TARGET_URL=""
@@ -637,6 +710,10 @@ while [ "$#" -gt 0 ]; do
       CLI_INITIAL_URL="$2"
       shift 2
       ;;
+    --repair)
+      REPAIR=true
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -668,6 +745,9 @@ case "$COMMAND" in
     ;;
   verify)
     cmd_verify
+    ;;
+  doctor)
+    cmd_doctor
     ;;
   ensure-browser)
     cmd_ensure_browser

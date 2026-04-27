@@ -82,6 +82,9 @@ EOF
 stale_status="$("$BASE_DIR/browser-runtime.sh" status --run-dir "$TMP_DIR/stale-run")"
 printf '%s\n' "$stale_status" | grep -q "status: stopped"
 printf '%s\n' "$stale_status" | grep -q "cdp_host: 127.0.0.1"
+doctor_stale="$("$BASE_DIR/browser-runtime.sh" doctor --run-dir "$TMP_DIR/stale-run" --origin "https://example.com" --session-key stale)"
+printf '%s\n' "$doctor_stale" | grep -q '"status": "stale"'
+printf '%s\n' "$doctor_stale" | grep -q '"runtime_not_running"'
 
 list_output="$("$BASE_DIR/browser-runtime.sh" list-targets --run-dir "$TMP_DIR")"
 printf '%s\n' "$list_output" | grep -q '^\[\]$'

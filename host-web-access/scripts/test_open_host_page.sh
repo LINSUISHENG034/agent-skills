@@ -13,6 +13,8 @@ LOG="${LOG_FILE}"
 echo "route:$1" >>"$LOG"
 case "$1" in
   --latest) echo '{"route":"search","reason":"latest-info","needs_browser":false}' ;;
+  --article) echo '{"route":"extract","reason":"public-article","needs_browser":false}' ;;
+  --batch-read) echo '{"route":"extract","reason":"batch-read","needs_browser":false}' ;;
   --interactive) echo '{"route":"browser","reason":"interaction-required","needs_browser":true}' ;;
   *) echo '{"route":"browser","reason":"host-browser-requested","needs_browser":true}' ;;
 esac
@@ -66,7 +68,7 @@ next_sequence_value() {
 case "${1:-}" in
   ensure-browser) exit 0 ;;
   start)
-    if [ "${RUNTIME_STATUS_RESPONSE:-running}" = "running" ]; then
+    if [ "${RUNTIME_STATUS_RESPONSE:-running}" = "running" ] && [ ! -f "$STATE_DIR/cleanup.done" ]; then
       echo "browser runtime already running" >&2
       exit 1
     fi
@@ -171,6 +173,61 @@ printf '{"ok":true}\n'
 EOF
   chmod +x "$tmp/bin/host-page-ops.py"
 
+  cat >"$tmp/bin/content-extract.py" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+LOG="${LOG_FILE}"
+echo "extract:$*" >>"$LOG"
+
+url=""
+output_dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --url)
+      url="$2"
+      shift 2
+      ;;
+    --output-dir)
+      output_dir="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+saved_path=""
+if [ -n "$output_dir" ]; then
+  mkdir -p "$output_dir"
+  saved_path="$output_dir/snapshot.md"
+  printf -- '---\ntitle: Stub Article\nurl: %s\nquality: high\n---\n\nStub markdown.\n' "$url" >"$saved_path"
+fi
+
+python3 - "$url" "$saved_path" <<'PY'
+import json
+import sys
+
+url, saved_path = sys.argv[1:]
+payload = {
+    "title": "Stub Article",
+    "url": url,
+    "source_type": "web",
+    "extraction_method": "stub",
+    "quality": "high",
+    "content_type": "article",
+    "markdown": "Stub markdown.",
+    "summary": "Stub markdown.",
+    "needs_browser": False,
+    "needs_browser_reason": "",
+}
+if saved_path:
+    payload["saved_path"] = saved_path
+print(json.dumps(payload))
+PY
+EOF
+  chmod +x "$tmp/bin/content-extract.py"
+
   cat >"$tmp/bin/assist-lan-session.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -213,10 +270,24 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 LOG="${LOG_FILE}"
+STATE_DIR="${RUNTIME_STATE_DIR:-}"
 echo "cleanup:$*" >>"$LOG"
+if [ -n "$STATE_DIR" ]; then
+  mkdir -p "$STATE_DIR"
+  : >"$STATE_DIR/cleanup.done"
+fi
 exit 0
 EOF
   chmod +x "$tmp/bin/cleanup-host-runtime.sh"
+
+  cat >"$tmp/bin/site-session-registry.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+LOG="${LOG_FILE}"
+echo "site-registry:$*" >>"$LOG"
+exit 0
+EOF
+  chmod +x "$tmp/bin/site-session-registry.sh"
 }
 
 assert_json_value() {
@@ -279,6 +350,20 @@ assert expected in actual, data
 PY
 }
 
+assert_json_array_length() {
+  local payload="$1"
+  local field="$2"
+  local expected="$3"
+  python3 - "$payload" "$field" "$expected" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+actual = len(data.get(sys.argv[2], []))
+assert actual == int(sys.argv[3]), data
+PY
+}
+
 assert_start_count() {
   local tmp="$1"
   local expected="$2"
@@ -314,6 +399,7 @@ run_lightweight() {
     HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
     HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
     HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
+    HOST_WEB_ACCESS_SITE_REGISTRY_HELPER="$tmp/bin/site-session-registry.sh" \
       bash "$BASE_DIR/open-host-page.sh" \
       --url "https://public.example/article" \
       --task-mode latest \
@@ -334,6 +420,71 @@ run_lightweight() {
   ! grep -q '^runtime:' "$tmp/actions.log"
 }
 
+run_article_extract_path() {
+  local tmp="$1"
+  local output
+  setup_stubs "$tmp"
+  output="$(
+    LOG_FILE="$tmp/actions.log" \
+    PROFILE_DIR_RESPONSE="$tmp/resolved-profile" \
+    HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
+    HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
+    HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
+    HOST_WEB_ACCESS_EXTRACT_HELPER="$tmp/bin/content-extract.py" \
+    HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
+    HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
+      bash "$BASE_DIR/open-host-page.sh" \
+      --url "https://public.example/article" \
+      --task-mode article \
+      --expected-action extract \
+      --output-dir "$tmp/snapshots"
+  )"
+  assert_json_value "$output" route extract
+  assert_json_value "$output" reason public-article
+  assert_json_value "$output" status ready
+  assert_json_value "$output" content_contract markdown-snapshot
+  assert_json_value "$output" extraction_method stub
+  assert_json_value "$output" quality high
+  assert_json_value "$output" needs_browser false
+  assert_json_value "$output" needs_browser_reason ""
+  assert_json_value "$output" saved_path "$tmp/snapshots/snapshot.md"
+  grep -q 'extract:.*--url https://public.example/article' "$tmp/actions.log"
+  ! grep -q '^profile:' "$tmp/actions.log"
+  ! grep -q '^runtime:' "$tmp/actions.log"
+}
+
+run_batch_read_path() {
+  local tmp="$1"
+  local output
+  setup_stubs "$tmp"
+  output="$(
+    LOG_FILE="$tmp/actions.log" \
+    PROFILE_DIR_RESPONSE="$tmp/resolved-profile" \
+    HOST_WEB_ACCESS_ROUTE_HELPER="$tmp/bin/route-web-task.sh" \
+    HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-resolution.sh" \
+    HOST_WEB_ACCESS_BROWSER_RUNTIME_HELPER="$tmp/bin/browser-runtime.sh" \
+    HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
+    HOST_WEB_ACCESS_EXTRACT_HELPER="$tmp/bin/content-extract.py" \
+    HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
+    HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
+      bash "$BASE_DIR/open-host-page.sh" \
+      --url "https://public.example/one" \
+      --url "https://public.example/two" \
+      --task-mode batch-read \
+      --expected-action extract \
+      --output-dir "$tmp/batch"
+  )"
+  assert_json_value "$output" route extract
+  assert_json_value "$output" reason batch-read
+  assert_json_value "$output" status ready
+  assert_json_value "$output" content_contract batch-markdown-snapshot
+  assert_json_array_length "$output" results 2
+  grep -q 'extract:.*--url https://public.example/one' "$tmp/actions.log"
+  grep -q 'extract:.*--url https://public.example/two' "$tmp/actions.log"
+  ! grep -q '^runtime:' "$tmp/actions.log"
+}
+
 run_expected_action_failure() {
   local tmp="$1"
   local output status
@@ -348,6 +499,7 @@ run_expected_action_failure() {
     HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
     HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
     HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
+    HOST_WEB_ACCESS_SITE_REGISTRY_HELPER="$tmp/bin/site-session-registry.sh" \
       bash "$BASE_DIR/open-host-page.sh" \
       --url "https://public.example/article" \
       --task-mode latest \
@@ -381,6 +533,7 @@ run_browser_path() {
     HOST_WEB_ACCESS_PAGE_OPS_HELPER="$tmp/bin/host-page-ops.py" \
     HOST_WEB_ACCESS_ASSIST_HELPER="$tmp/bin/assist-lan-session.sh" \
     HOST_WEB_ACCESS_CLEANUP_HELPER="$tmp/bin/cleanup-host-runtime.sh" \
+    HOST_WEB_ACCESS_SITE_REGISTRY_HELPER="$tmp/bin/site-session-registry.sh" \
       bash "$BASE_DIR/open-host-page.sh" \
       --url "https://protected.example/dashboard" \
       --task-mode interactive \
@@ -416,6 +569,8 @@ run_browser_path() {
   grep -q 'runtime:check-page .*--check challenge' "$tmp/actions.log"
   grep -q 'runtime:check-page .*--check login-wall' "$tmp/actions.log"
   grep -q 'runtime:check-page .*--check page-info' "$tmp/actions.log"
+  grep -q '^site-registry:write .*--site protected.example' "$tmp/actions.log"
+  grep -q '^site-registry:write .*--session-key foxcode-main' "$tmp/actions.log"
   ! grep -q '^cleanup:' "$tmp/actions.log"
   ! grep -q '^assist:' "$tmp/actions.log"
 }
@@ -456,7 +611,7 @@ run_browser_path_cleanup_on_exit() {
   ! grep -q '^assist:' "$tmp/actions.log"
 }
 
-run_verify_failure_reuses_running_runtime() {
+run_verify_failure_restarts_runtime() {
   local tmp="$1"
   local output
   setup_stubs "$tmp"
@@ -488,7 +643,8 @@ run_verify_failure_reuses_running_runtime() {
   assert_json_value "$output" status ready
   assert_json_value "$output" next_action none
   assert_json_value "$output" operator_required false
-  ! grep -q '^runtime:start ' "$tmp/actions.log"
+  grep -q '^runtime:start ' "$tmp/actions.log"
+  grep -q '^cleanup:--run-dir ' "$tmp/actions.log"
   ! grep -q '^assist:' "$tmp/actions.log"
 }
 
@@ -759,10 +915,12 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 run_expected_failure
 run_lightweight "$TMP_DIR/light"
+run_article_extract_path "$TMP_DIR/article-extract"
+run_batch_read_path "$TMP_DIR/batch-read"
 run_expected_action_failure "$TMP_DIR/route-assert"
 run_browser_path "$TMP_DIR/browser"
 run_browser_path_cleanup_on_exit "$TMP_DIR/browser-cleanup-on-exit"
-run_verify_failure_reuses_running_runtime "$TMP_DIR/verify-fail-running"
+run_verify_failure_restarts_runtime "$TMP_DIR/verify-fail-running"
 run_normalized_target_url_is_ready "$TMP_DIR/normalized-ready"
 run_assist_path_challenge "$TMP_DIR/assist-challenge"
 run_assist_path_login_wall "$TMP_DIR/assist-login-wall"

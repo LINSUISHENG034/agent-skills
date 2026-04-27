@@ -8,21 +8,36 @@ source "$SCRIPT_DIR/runtime-common.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  open-host-page.sh --url URL [--session-key KEY] [--task-mode MODE] [--expected-action ACTION] [--cleanup-on-exit] [--run-dir DIR] [--manifest-root DIR]
+  open-host-page.sh --url URL [--url URL ...] [--session-key KEY] [--task-mode MODE] [--expected-action ACTION] [--cleanup-on-exit] [--run-dir DIR] [--manifest-root DIR] [--output-dir DIR]
 
 Options:
   --url URL
   --session-key KEY
-  --task-mode MODE           latest|article|dynamic|protected|interactive|login-required|host-browser
-  --expected-action ACTION   search|fetch|browser (legacy lightweight alias accepted)
+  --task-mode MODE           latest|article|batch-read|dynamic|protected|interactive|login-required|host-browser
+  --expected-action ACTION   search|fetch|extract|browser (legacy lightweight alias accepted)
   --cleanup-on-exit          tear down the browser runtime before the script exits
   --run-dir DIR
   --manifest-root DIR
+  --output-dir DIR           save lightweight extraction markdown snapshots
 EOF
 }
 
 die() {
-  printf '[open-host-page] ERROR: %s\n' "$*" >&2
+  local message="$1"
+  local error_code="${2:-entrypoint_error}"
+  local suggested_action="${3:-inspect-arguments-and-runtime}"
+  python3 - "$error_code" "$message" "$suggested_action" <<'PY' >&2
+import json
+import sys
+
+error_code, message, suggested_action = sys.argv[1:]
+print(json.dumps({
+    "status": "error",
+    "error_code": error_code,
+    "message": message,
+    "suggested_action": suggested_action,
+}))
+PY
   exit 1
 }
 
@@ -187,6 +202,75 @@ print(json.dumps(payload))
 PY
 }
 
+emit_extract_result() {
+  python3 - "$@" <<'PY'
+import json
+import sys
+
+route, reason, needs_browser, origin, extract_payload = sys.argv[1:6]
+content = json.loads(extract_payload)
+payload = {
+    "route": route,
+    "reason": reason,
+    "needs_browser": bool(content.get("needs_browser", needs_browser == "true")),
+    "needs_browser_reason": content.get("needs_browser_reason", ""),
+    "origin": origin,
+    "status": "ready",
+    "next_action": "none",
+    "operator_required": False,
+    "content_contract": "markdown-snapshot",
+}
+for key in (
+    "title",
+    "url",
+    "source_type",
+    "content_type",
+    "extraction_method",
+    "quality",
+    "fetched_at",
+    "summary",
+    "saved_path",
+    "error",
+):
+    if key in content:
+        payload[key] = content[key]
+if content.get("markdown"):
+    payload["markdown"] = content["markdown"]
+print(json.dumps(payload, ensure_ascii=False))
+PY
+}
+
+emit_batch_extract_result() {
+  python3 - "$@" <<'PY'
+import json
+import sys
+
+route, reason, origin, results_raw = sys.argv[1:5]
+results = json.loads(results_raw)
+needs_browser_items = [item for item in results if item.get("needs_browser")]
+payload = {
+    "route": route,
+    "reason": reason,
+    "needs_browser": bool(needs_browser_items),
+    "needs_browser_reason": "one-or-more-extractions-need-browser" if needs_browser_items else "",
+    "origin": origin,
+    "status": "ready",
+    "next_action": "none",
+    "operator_required": False,
+    "content_contract": "batch-markdown-snapshot",
+    "results": results,
+    "quality_summary": {
+        "total": len(results),
+        "needs_browser": len(needs_browser_items),
+        "high": sum(1 for item in results if item.get("quality") == "high"),
+        "medium": sum(1 for item in results if item.get("quality") == "medium"),
+        "low": sum(1 for item in results if item.get("quality") == "low"),
+    },
+}
+print(json.dumps(payload, ensure_ascii=False))
+PY
+}
+
 assert_expected_route() {
   case "$expected_action" in
     "")
@@ -197,13 +281,13 @@ assert_expected_route() {
         die "route assertion failed before browser orchestration started: expected lightweight route but router returned browser"
       fi
       ;;
-    search|fetch|browser)
+    search|fetch|extract|browser)
       if [ "$route" != "$expected_action" ]; then
-        die "route assertion failed before browser orchestration started: expected route $expected_action but router returned $route"
+        die "route assertion failed before browser orchestration started: expected route $expected_action but router returned $route" "route_assertion_failed" "change-task-mode-or-expected-action"
       fi
       ;;
     *)
-      die "--expected-action must be search, fetch, browser, or legacy lightweight"
+      die "--expected-action must be search, fetch, extract, browser, or legacy lightweight" "invalid_arguments" "use-a-supported-expected-action"
       ;;
   esac
 }
@@ -215,19 +299,24 @@ ASSIST_HELPER="${HOST_WEB_ACCESS_ASSIST_HELPER:-$SCRIPT_DIR/assist-lan-session.s
 CLEANUP_HELPER="${HOST_WEB_ACCESS_CLEANUP_HELPER:-$SCRIPT_DIR/cleanup-host-runtime.sh}"
 PROFILE_HELPER="${HOST_WEB_ACCESS_PROFILE_HELPER:-$SCRIPT_DIR/profile-resolution.sh}"
 PAGE_OPS_HELPER="${HOST_WEB_ACCESS_PAGE_OPS_HELPER:-$SCRIPT_DIR/host-page-ops.py}"
+CONTENT_EXTRACT_HELPER="${HOST_WEB_ACCESS_EXTRACT_HELPER:-$SCRIPT_DIR/content-extract.py}"
+SITE_REGISTRY_HELPER="${HOST_WEB_ACCESS_SITE_REGISTRY_HELPER:-$SCRIPT_DIR/site-session-registry.sh}"
 
 task_mode="latest"
 expected_action=""
 cleanup_on_exit="false"
 url=""
+urls=()
 session_key="default"
 run_dir=""
 manifest_root=""
+output_dir=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --url)
       url="$2"
+      urls+=("$2")
       shift 2
       ;;
     --session-key)
@@ -254,17 +343,22 @@ while [ "$#" -gt 0 ]; do
       manifest_root="$2"
       shift 2
       ;;
+    --output-dir)
+      output_dir="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
       ;;
     *)
-      die "unknown option: $1"
+      die "unknown option: $1" "invalid_arguments" "run-open-host-page-help"
       ;;
   esac
 done
 
-[ -n "$url" ] || die "--url is required"
+[ "${#urls[@]}" -gt 0 ] || die "--url is required" "invalid_arguments" "provide-url"
+url="${urls[0]}"
 
 origin="$(derive_origin "$url")"
 base_root="${HOME}/.agent-browser"
@@ -277,7 +371,38 @@ reason="$(json_field reason "$route_output")"
 needs_browser="$(json_field needs_browser "$route_output")"
 assert_expected_route
 
+run_extract() {
+  local extract_url="$1"
+  local extract_args=(--url "$extract_url")
+  if [ -n "$output_dir" ]; then
+    extract_args+=(--output-dir "$output_dir")
+  fi
+  "$CONTENT_EXTRACT_HELPER" "${extract_args[@]}"
+}
+
 if [ "$route" != "browser" ]; then
+  if [ "$route" = "extract" ]; then
+    if [ "${#urls[@]}" -gt 1 ] || [ "$task_mode" = "batch-read" ]; then
+      extract_results="[]"
+      for current_url in "${urls[@]}"; do
+        current_result="$(run_extract "$current_url")"
+        extract_results="$(python3 - "$extract_results" "$current_result" <<'PY'
+import json
+import sys
+
+items = json.loads(sys.argv[1])
+items.append(json.loads(sys.argv[2]))
+print(json.dumps(items, ensure_ascii=False))
+PY
+)"
+      done
+      emit_batch_extract_result "$route" "$reason" "$origin" "$extract_results"
+      exit 0
+    fi
+    extract_output="$(run_extract "$url")"
+    emit_extract_result "$route" "$reason" "$needs_browser" "$origin" "$extract_output"
+    exit 0
+  fi
   emit_result "$route" "$reason" "$needs_browser" "$origin" "ready" "none" "false" "" "" "" "" "" "" "" "" "" "" "" ""
   exit 0
 fi
@@ -290,7 +415,7 @@ resolved_profile="$(
     --session-key "$session_key"
 )"
 profile_dir="$(json_field profile_dir "$resolved_profile")"
-[ -n "$profile_dir" ] || die "profile-resolution did not return profile_dir"
+[ -n "$profile_dir" ] || die "profile-resolution did not return profile_dir" "profile_resolution_failed" "check-profile-resolution-output"
 
 cleanup_browser() {
   if [ "${PRESERVE_RUNTIME_ON_EXIT:-false}" = "true" ]; then
@@ -302,7 +427,7 @@ cleanup_browser() {
 trap cleanup_browser EXIT
 
 if ! "$BROWSER_RUNTIME_HELPER" ensure-browser --run-dir "$run_dir" >/dev/null; then
-  die "browser dependency check failed"
+  die "browser dependency check failed" "browser_dependency_missing" "install-google-chrome-or-chromium"
 fi
 
 start_runtime() {
@@ -330,16 +455,8 @@ if "$BROWSER_RUNTIME_HELPER" verify \
   --session-key "$session_key" >/dev/null 2>&1; then
   runtime_reused="true"
 else
-  verify_status_output="$("$BROWSER_RUNTIME_HELPER" status \
-    --run-dir "$run_dir" \
-    --origin "$origin" \
-    --session-key "$session_key" 2>/dev/null || true)"
-  verify_runtime_status="$(status_field status "$verify_status_output")"
-  if [ "$verify_runtime_status" = "running" ]; then
-    runtime_reused="true"
-  else
-    start_runtime
-  fi
+  "$CLEANUP_HELPER" --run-dir "$run_dir" >/dev/null 2>&1 || true
+  start_runtime
 fi
 
 status_output="$("$BROWSER_RUNTIME_HELPER" status --run-dir "$run_dir" --origin "$origin" --session-key "$session_key")"
@@ -375,6 +492,15 @@ evaluate_page_state() {
 
   page_status="target-mismatch"
   return 1
+}
+
+record_reusable_site() {
+  "$SITE_REGISTRY_HELPER" write \
+    --root "$base_root" \
+    --site "$(site_key "$origin")" \
+    --session-key "$session_key" \
+    --profile-dir "$profile_dir" \
+    --source-origin "$origin" >/dev/null 2>&1 || true
 }
 
 target_id="$(select_target || true)"
@@ -430,7 +556,7 @@ case "$page_status" in
       --profile-dir "$profile_dir" \
       --manifest-root "$manifest_root")"
     lan_novnc_url="$(status_field lan_novnc_url "$assist_output")"
-    [ -n "$lan_novnc_url" ] || die "assisted handoff missing lan_novnc_url"
+    [ -n "$lan_novnc_url" ] || die "assisted handoff missing lan_novnc_url" "assist_handoff_failed" "inspect-assist-lan-session-output"
     assisted_session="true"
     status="needs-user"
     next_action="open-novnc"
@@ -443,6 +569,9 @@ case "$page_status" in
     PRESERVE_RUNTIME_ON_EXIT="true"
     ;;
   *)
+    if [ "$page_status" = "ready" ]; then
+      record_reusable_site
+    fi
     if [ "$cleanup_on_exit" != "true" ]; then
       PRESERVE_RUNTIME_ON_EXIT="true"
     fi
