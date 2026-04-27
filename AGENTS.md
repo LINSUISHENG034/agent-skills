@@ -58,6 +58,24 @@ Rules:
 - Do not add a default push remote to the local `drafts/` repository unless you explicitly intend to publish draft history somewhere else.
 - Do not add a default push remote to the local `restricted/` repository unless you explicitly intend to synchronize restricted history to a private location.
 
+## Remote Issue Iteration Workflow
+
+When asked to process remote repository issues end-to-end:
+
+- Use the `github-issue-iteration` skill when available.
+- Start by checking `git status --short`, the current branch, and the remote URL.
+- Fetch the current remote issue list with `gh issue list --state open --json ...`; do not rely on stale local notes.
+- Read each issue body and map it to concrete acceptance criteria before editing.
+- Keep local investigation/planning notes under `docs/plans/` or `docs/issues/` only, and do not stage those local-only files.
+- Use test-first changes for behavior fixes whenever practical; verify the relevant failing behavior before implementation.
+- Preserve unrelated user changes unless explicitly asked to include them.
+- Before committing, run the smallest complete verification suite that proves the issue criteria and record the exact commands.
+- Stage only intended files with targeted `git add path/to/file`; never use `git add .` for this workflow.
+- Commit focused publishable changes, then push the branch requested by the user.
+- Reply to every handled issue with the commit hash, a concise change summary, and the exact verification commands.
+- Close issues only after the commit is pushed and the issue comment is posted.
+- After closing, confirm `gh issue list --state open` and local `git status --short`.
+
 ## Planning Workflow
 
 - Use `docs/plans/` for local design and implementation planning only.
