@@ -124,7 +124,7 @@ def fetch_url(url: str, timeout: float) -> tuple[bytes, str]:
 
 
 def extract(url: str, timeout: float, max_chars: int | None) -> dict[str, object]:
-    fetched_at = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    fetched_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     error = ""
     content_type = ""
     title = ""

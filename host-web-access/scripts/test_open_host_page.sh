@@ -454,6 +454,49 @@ run_article_extract_path() {
   ! grep -q '^runtime:' "$tmp/actions.log"
 }
 
+run_article_extract_real_helpers_skip_profile_resolution() {
+  local tmp="$1"
+  local output
+  mkdir -p "$tmp/bin"
+  cat >"$tmp/bin/profile-tripwire.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'profile tripwire called: %s\n' "$*" >"${TRIPWIRE_LOG}"
+exit 97
+EOF
+  chmod +x "$tmp/bin/profile-tripwire.sh"
+  cat >"$tmp/article.html" <<'HTML'
+<!doctype html>
+<html>
+  <head><title>Real Helper Article</title></head>
+  <body>
+    <article>
+      <h1>Real Helper Article</h1>
+      <p>This local article exercises the real route and extract helpers without requiring browser profile resolution.</p>
+    </article>
+  </body>
+</html>
+HTML
+
+  output="$(
+    HOME="$tmp/home" \
+    TRIPWIRE_LOG="$tmp/profile-tripwire.log" \
+    HOST_WEB_ACCESS_PROFILE_HELPER="$tmp/bin/profile-tripwire.sh" \
+      bash "$BASE_DIR/open-host-page.sh" \
+      --url "file://$tmp/article.html" \
+      --task-mode article \
+      --expected-action extract \
+      --output-dir "$tmp/snapshots"
+  )"
+
+  assert_json_value "$output" route extract
+  assert_json_value "$output" reason public-article
+  assert_json_value "$output" status ready
+  assert_json_value "$output" content_contract markdown-snapshot
+  assert_json_value "$output" extraction_method http-html
+  assert_json_value "$output" title "Real Helper Article"
+  [ ! -f "$tmp/profile-tripwire.log" ]
+}
+
 run_batch_read_path() {
   local tmp="$1"
   local output
@@ -916,6 +959,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 run_expected_failure
 run_lightweight "$TMP_DIR/light"
 run_article_extract_path "$TMP_DIR/article-extract"
+run_article_extract_real_helpers_skip_profile_resolution "$TMP_DIR/article-extract-real"
 run_batch_read_path "$TMP_DIR/batch-read"
 run_expected_action_failure "$TMP_DIR/route-assert"
 run_browser_path "$TMP_DIR/browser"
